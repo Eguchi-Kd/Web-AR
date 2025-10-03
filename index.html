@@ -2,13 +2,15 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WebAR — Title</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>WebAR — Title & Load</title>
   <link rel="stylesheet" href="./css/styles.css" />
 </head>
 <body>
+  <!-- Three.js canvas area (used by title preview and AR preview) -->
   <div id="three-wrap"></div>
 
+  <!-- Title UI (initial screen) -->
   <div id="ui">
     <img id="bg" src="./assets/title_bg.png" alt="bg" />
     <img id="bubble" src="./assets/bubble.png" class="bubble-anim" alt="bubble" />
@@ -17,18 +19,40 @@
     <div id="btn-area"><button id="btnStart" class="btn">Start</button></div>
   </div>
 
+  <!-- Loading screen (hidden initially) -->
+  <div id="loading-screen" class="loading-container" aria-hidden="true">
+    <div class="spinner-loader">
+      <div class="spinner"></div>
+    </div>
+    <div class="loading-text">読み込み中...</div>
+    <div id="load-log" class="load-log"></div>
+    <div id="load-errors" class="load-errors"></div>
+  </div>
+
+  <!-- AR experience screen (non-AR preview initially) -->
+  <div id="ar-screen" class="ar-screen" aria-hidden="true">
+    <div id="ar-ui-top" class="ar-ui-top">
+      <button id="btnEnterAR" class="btn small">ARモード</button>
+      <button id="btnBackToTitle" class="btn small ghost">戻る</button>
+    </div>
+    <div id="ar-status" class="ar-status">AR準備完了（非ARプレビュー）</div>
+    <div id="ar-log" class="load-log"></div>
+  </div>
+
+  <!-- Debug / small status -->
   <div id="debug">
-    <div>Model preload: <span id="dbgModel">loading...</span></div>
+    <div>Model preload: <span id="dbgModel">idle</span></div>
     <div>Pose index: <span id="dbgPose">0</span></div>
     <div id="dbgMsg" style="margin-top:6px; color:#f88"></div>
   </div>
 
   <!-- Libraries -->
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.6.0"></script>
 
-  <!-- App scripts -->
+  <!-- App scripts (module) -->
   <script type="module" src="./js/main.js"></script>
 </body>
 </html>
