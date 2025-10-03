@@ -7,10 +7,10 @@
   <link rel="stylesheet" href="./css/styles.css" />
 </head>
 <body>
-  <!-- Canvas container -->
+  <!-- Canvas -->
   <div id="three-wrap"></div>
 
-  <!-- Title UI overlay (hidable content carries class `hidable`) -->
+  <!-- Title UI (only Start visible initially) -->
   <div id="ui" class="app-ui hidable">
     <img id="bg" src="./assets/title_bg.png" alt="bg" />
     <img id="bubble" src="./assets/bubble.png" class="bubble-anim" alt="bubble" />
@@ -19,46 +19,46 @@
     <div id="btn-area"><button id="btnStart" class="btn">Start</button></div>
   </div>
 
-  <!-- Loading screen -->
+  <!-- Loading -->
   <div id="loading-screen" class="loading-container" aria-hidden="true">
-    <div class="spinner-loader">
-      <div class="spinner"></div>
-    </div>
+    <div class="spinner-loader"><div class="spinner"></div></div>
     <div class="loading-text">読み込み中...</div>
-    <div id="load-log" class="load-log"></div>
-    <div id="load-errors" class="load-errors"></div>
+    <div id="load-log" class="load-log initial-hidden hidable"></div>
+    <div id="load-errors" class="load-errors initial-hidden hidable"></div>
   </div>
 
-  <!-- AR experience screen (non-AR preview initially) -->
+  <!-- AR preview screen -->
   <div id="ar-screen" class="ar-screen" aria-hidden="true">
-    <div id="ar-status" class="ar-status">プレビュー準備中...</div>
-    <div id="ar-log" class="load-log"></div>
+    <div id="ar-status" class="ar-status initial-hidden hidable">プレビュー準備中...</div>
+    <div id="ar-log" class="load-log initial-hidden hidable"></div>
   </div>
 
-  <!-- Right-side vertical UI (persistent toggle and screenshot button).
-       Buttons that should be hidden when UI is toggled must have .hidable removed -->
-  <div id="side-ui" class="side-ui">
+  <!-- Right-side vertical UI -->
+  <div id="side-ui" class="side-ui initial-hidden hidable">
+    <!-- Toggle always visible (no .hidable) -->
     <button id="btnToggleUI" class="btn small">UI 表示/非表示</button>
-    <button id="btnScreenshot" class="btn small">スクショ</button>
-    <button id="btnBackToTitle" class="btn small ghost hidable">戻る</button>
+    <!-- The following are hidden when UI toggled off; also initial-hidden so not shown before load -->
+    <button id="btnScreenshot" class="btn small hidable initial-hidden">スクショ</button>
+    <button id="btnBackToTitle" class="btn small ghost hidable initial-hidden">戻る</button>
   </div>
 
-  <!-- Top log area -->
-  <div id="top-log" class="top-log"></div>
+  <!-- Top log (summary) - hidden initially -->
+  <div id="top-log" class="top-log initial-hidden hidable"></div>
 
   <!-- Debug small status (hidable) -->
-  <div id="debug" class="app-ui hidable">
+  <div id="debug" class="app-ui hidable initial-hidden">
     <div>Model preload: <span id="dbgModel">idle</span></div>
     <div>Pose index: <span id="dbgPose">0</span></div>
     <div id="dbgMsg" style="margin-top:6px; color:#f88"></div>
   </div>
 
-  <!-- Libs -->
+  <!-- Libraries (model-viewer, three, gltf, three-vrm) -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.6.0"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <!-- Note: OrbitControls will be imported as ESM by ar-screen.js; UMD left out to avoid conflicts -->
 
   <!-- App -->
   <script type="module" src="./js/main.js"></script>
