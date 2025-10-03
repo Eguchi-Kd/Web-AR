@@ -3,11 +3,7 @@ import { startTitle, stopTitle } from './title-screen.js';
 import { prepareARFlow } from './load-screen.js';
 import { startPreview } from './ar-screen.js';
 
-let globalState = {
-  preloaded: null,
-  selectedMode: null,
-  arPreviewHandle: null
-};
+let globalState = { preloaded: null, selectedMode: null, arPreviewHandle: null };
 
 async function init() {
   // Start title screen
@@ -29,7 +25,7 @@ async function init() {
       logEl.prepend(d);
     }
 
-    // call prepareARFlow with callback
+    // Prepare AR flow
     const result = await prepareARFlow({
       vrmPath: './assets/Aorin.vrm',
       glbPath: './assets/Aorin.glb',
@@ -37,14 +33,12 @@ async function init() {
       logCallback: (m) => { pushLog(m); }
     });
 
-    // show errors if any
-    if (result.errors && result.errors.length > 0) {
+    if (result.errors && result.errors.length) {
       errEl.textContent = result.errors.join('\\n');
     } else {
       errEl.textContent = '';
     }
 
-    // store preloaded
     globalState.preloaded = result.preloaded;
     globalState.selectedMode = result.mode;
 
@@ -54,38 +48,39 @@ async function init() {
     loading.style.display = 'none';
     loading.setAttribute('aria-hidden', 'true');
 
-    // Stop title screen rendering and cleanup canvases
+    // stop title rendering and cleanup
     try {
       stopTitle();
     } catch (e) {
       console.warn('stopTitle error', e);
     }
 
-    // Start non-AR preview (AR screen)
+    // start non-AR preview
+    let previewHandle = null;
     try {
-      const previewHandle = await startPreview(result.preloaded);
+      previewHandle = await startPreview(result.preloaded);
       globalState.arPreviewHandle = previewHandle;
     } catch (e) {
       console.error('Failed to start AR preview:', e);
-      // show an error in ar-screen area
       const arScreen = document.getElementById('ar-screen');
       arScreen.style.display = 'block';
       document.getElementById('ar-status').textContent = 'プレビュー開始に失敗しました: ' + e;
+      return;
     }
 
-    // show AR screen UI
+    // show AR UI
     const arScreen = document.getElementById('ar-screen');
     arScreen.style.display = 'block';
     arScreen.setAttribute('aria-hidden', 'false');
 
-    // update status text based on selected mode
+    // update status
     const status = document.getElementById('ar-status');
     if (result.mode === 'ios-quicklook') status.textContent = 'iOS Quick Look 準備完了（プレビュー中）';
     else if (result.mode === 'android-webxr') status.textContent = 'Android WebXR 準備完了（プレビュー中）';
     else if (result.mode === 'scene-viewer') status.textContent = 'Scene Viewer 準備完了（プレビュー中）';
     else status.textContent = 'プレビュー準備完了（AR を開始できます）';
 
-    // Bind AR button actions (existing code from previous implementation)
+    // Bind AR button
     document.getElementById('btnEnterAR').onclick = async () => {
       const arLog = document.getElementById('ar-log');
       function aLog(m) {
@@ -114,12 +109,11 @@ async function init() {
                 const session = await navigator.xr.requestSession('immersive-ar', options);
                 aLog('WebXR session started.');
                 document.getElementById('ar-status').textContent = 'ARセッション開始';
-                // Note: full three.js WebXR integration (renderer.xr.setSession etc.) to be implemented next.
+                // full WebXR integration can be implemented next
               } catch (e) { aLog('Failed to start WebXR session: ' + e); }
             } else { aLog('WebXR not supported on this device.'); }
           } else { aLog('navigator.xr not available.'); }
         } else {
-          // scene-viewer or model-viewer fallback
           const mv = document.createElement('model-viewer');
           mv.setAttribute('style','display:none;');
           mv.setAttribute('src','./assets/Aorin.glb');
@@ -132,16 +126,41 @@ async function init() {
       } catch (e) { aLog('Enter AR error: ' + e); }
     };
 
-    // Back to title
+    // Bind UI toggle
+    document.getElementById('btnToggleUI').onclick = () => {
+      document.documentElement.classList.toggle('ui-hidden');
+    };
+
+    // Bind screenshot button
+    document.getElementById('btnScreenshot').onclick = async () => {
+      const arLog = document.getElementById('ar-log');
+      function aLog(m) {
+        const d = document.createElement('div');
+        d.textContent = `[${new Date().toLocaleTimeString()}] ${m}`;
+        arLog.prepend(d);
+      }
+      if (globalState.arPreviewHandle && typeof globalState.arPreviewHandle.captureScreenshot === 'function') {
+        aLog('Capturing screenshot...');
+        try {
+          const r = await globalState.arPreviewHandle.captureScreenshot({ downloadName: 'screenshot.png' });
+          aLog('Screenshot result: ' + JSON.stringify({ success: r.success, openedNewTab: r.openedNewTab || false }));
+        } catch (e) {
+          aLog('Screenshot failed: ' + e);
+        }
+      } else {
+        aLog('Screenshot not available.');
+      }
+    };
+
+    // Back button
     document.getElementById('btnBackToTitle').onclick = () => {
-      // hide AR screen and show title UI; also stop preview renderer
       const arScreen = document.getElementById('ar-screen');
       arScreen.style.display = 'none';
       document.getElementById('ui').style.display = 'block';
       if (globalState.arPreviewHandle && typeof globalState.arPreviewHandle.stop === 'function') {
         try { globalState.arPreviewHandle.stop(); } catch(e){ console.warn('Failed to stop preview handle', e); }
       }
-      // restart title screen (optional)
+      // restart title (optional)
       startTitle().catch(()=>{});
     };
   });
