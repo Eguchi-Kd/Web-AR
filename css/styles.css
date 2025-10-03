@@ -5,7 +5,7 @@ html,body { height:100%; margin:0; background:#000; font-family: "Noto Sans JP",
 #three-wrap { position:fixed; inset:0; z-index:0; background:#000; display:flex; align-items:center; justify-content:center; }
 canvas { display:block; width:100%; height:100%; }
 
-/* Title UI (hidable) */
+/* Title UI */
 #ui { position:fixed; inset:0; z-index:var(--panel-z); pointer-events:none; display:flex; align-items:center; justify-content:center; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 #bg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:1; pointer-events:none; }
 #bubble { position:absolute; top:8vh; left:6vw; width:30vw; max-width:220px; height:auto; transform-origin:center center; z-index:3; pointer-events:none; will-change:transform; }
@@ -15,11 +15,10 @@ canvas { display:block; width:100%; height:100%; }
 .btn.small { padding:8px 10px; font-size:14px; border-radius:10px; }
 .btn.ghost { background: transparent; color: #fff; border:1px solid rgba(255,255,255,0.18); box-shadow:none; }
 
-/* bubble animation */
 @keyframes bubblePulse { 0%{transform:scale(1)} 4.166%{transform:scale(0.8)} 8.333%{transform:scale(1.2)} 12.5%{transform:scale(1)} 16.666%{transform:scale(0.8)} 20.833%{transform:scale(1.2)} 25%{transform:scale(1)} 29.166%{transform:scale(0.8)} 33.333%{transform:scale(1.2)} 37.5%{transform:scale(1)} 100%{transform:scale(1)} }
 .bubble-anim { animation: bubblePulse 8s ease-in-out infinite; }
 
-/* Loading overlay */
+/* Loading */
 .loading-container { display:none; flex-direction:column; align-items:center; justify-content:center; min-height:200px; text-align:center; position:fixed; inset:0; z-index:60; background:rgba(0,0,0,0.6); }
 .spinner-loader { position:relative; width:60px; height:60px; margin-bottom:20px; }
 .spinner { width:100%; height:100%; border:4px solid #f3f3f3; border-top:4px solid #3498db; border-radius:50%; animation:spin 1s linear infinite; }
@@ -27,23 +26,24 @@ canvas { display:block; width:100%; height:100%; }
 @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
 .load-log { max-height:200px; overflow:auto; color:#111; font-size:13px; text-align:left; width:92%; max-width:980px; background:rgba(255,255,255,0.96); padding:8px; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.2); }
 
-/* Top log area (centered) */
+/* Top log */
 .top-log { position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:120; width:92%; max-width:980px; pointer-events:none; display:flex; justify-content:center; }
 .top-log .load-log { pointer-events:auto; background:#ffffffcc; color:#000; }
 
-/* Side UI (right vertical) */
+/* Side UI: persistent + hidable */
 .side-ui { position:fixed; right:8px; top:50%; transform:translateY(-50%); z-index:121; display:flex; flex-direction:column; gap:8px; pointer-events:auto; }
-.side-ui .btn { min-width:60px; }
+#side-ui-persistent { /* always visible area for toggle */ }
+#side-ui-hidable { display:flex; flex-direction:column; gap:8px; }
 
 /* AR screen */
 .ar-screen { display:none; position:fixed; inset:0; z-index:60; pointer-events:auto; color:#fff; }
 .ar-status { position:fixed; top:12px; left:12px; z-index:130; font-size:14px; background: rgba(0,0,0,0.45); padding:8px 10px; border-radius:8px; color:#fff; }
 
-/* Debug panel (hidable) */
+/* Debug panel */
 #debug { position:fixed; bottom:12px; left:12px; z-index:50; color:#fff; background:rgba(0,0,0,0.45); padding:8px 10px; border-radius:8px; font-size:12px; max-width:320px; pointer-events:auto; }
 
-/* elements hidden until we remove this class (initial state) */
+/* initial-hidden - hide until Start pressed */
 .initial-hidden { display:none !important; }
 
-/* hide all .hidable on toggle */
+/* hide all .hidable when toggled */
 .ui-hidden .hidable { display:none !important; }
