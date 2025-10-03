@@ -1,14 +1,17 @@
 // js/ar-screen.js
-// Non-AR preview with touch-controlled OrbitControls, pinch zoom, UI toggle, screenshot support.
+// ESM version: imports OrbitControls as module to avoid timing issues.
+// Note: this file is an ES module loaded by main.js.
+
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/controls/OrbitControls.js';
 
 export async function startPreview(preloaded = null) {
   const container = document.getElementById('three-wrap');
   if (!container) throw new Error('No #three-wrap container found');
 
-  // cleanup
+  // cleanup previous canvas
   while (container.firstChild) container.removeChild(container.firstChild);
 
-  // create renderer with preserveDrawingBuffer for reliable screenshots
+  // create renderer with preserveDrawingBuffer for screenshots
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
@@ -30,27 +33,40 @@ export async function startPreview(preloaded = null) {
   dir.position.set(1, 1, 1).normalize();
   scene.add(dir);
 
-  // grid & axes
+  // grid + axes
   const grid = new THREE.GridHelper(10, 10);
   scene.add(grid);
   const axes = new THREE.AxesHelper(0.5);
   scene.add(axes);
 
-  // OrbitControls (UMD)
-  if (!THREE.OrbitControls && window.OrbitControls) THREE.OrbitControls = window.OrbitControls;
-  if (!THREE.OrbitControls) console.warn('OrbitControls missing');
-  const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 0.85, 0);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.screenSpacePanning = true;
-  controls.enablePan = false;
-  controls.enableZoom = true;
-  controls.minDistance = 0.6;
-  controls.maxDistance = 6;
-  controls.rotateSpeed = 0.6;
-  controls.zoomSpeed = 1.0;
-  controls.update();
+  // Controls (use imported OrbitControls)
+  let controls;
+  try {
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.85, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.screenSpacePanning = true;
+    controls.enablePan = false;
+    controls.enableZoom = true;
+    controls.minDistance = 0.6;
+    controls.maxDistance = 6;
+    controls.rotateSpeed = 0.6;
+    controls.zoomSpeed = 1.0;
+    controls.update();
+    console.log('OrbitControls initialized (ESM).');
+  } catch (e) {
+    console.warn('OrbitControls ESM init failed. Falling back to UMD (if present).', e);
+    if (window.OrbitControls) {
+      controls = new window.OrbitControls(camera, renderer.domElement);
+      controls.update();
+    } else if (THREE.OrbitControls) {
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.update();
+    } else {
+      console.warn('No OrbitControls available.');
+    }
+  }
 
   // add model or placeholder
   let addedModel = null;
@@ -69,17 +85,19 @@ export async function startPreview(preloaded = null) {
       scene.add(cyl);
       addedModel = cyl;
     }
-  } catch (e) { console.warn('add model error', e); }
+  } catch (e) {
+    console.warn('Failed to add model to preview:', e);
+  }
 
-  // set background to light blue for preview
+  // set bg to light blue
   const prevBg = container.style.background || '';
   container.style.background = '#bfefff';
 
-  // animation loop
+  // render loop
   let raf = null;
   function animate() {
     raf = requestAnimationFrame(animate);
-    controls.update();
+    if (controls && typeof controls.update === 'function') controls.update();
     renderer.render(scene, camera);
   }
   animate();
@@ -91,23 +109,19 @@ export async function startPreview(preloaded = null) {
   }
   window.addEventListener('resize', onResize);
 
-  // screenshot function: hides hidable UI, ensures a frame is rendered, then capture
+  // screenshot: hide .hidable, render next frame, capture to blob
   async function captureScreenshot(filename = 'screenshot.png') {
-    // hide hidable UI
     document.documentElement.classList.add('ui-hidden');
-    // wait two animation frames so UI is hidden and next frame renders
+    // wait two frames to ensure UI is hidden and canvas updated
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
 
-    // capture via toBlob for better memory
     const blob = await new Promise((resolve) => {
       try {
         renderer.domElement.toBlob((b) => resolve(b), 'image/png');
       } catch (e) {
-        // as fallback, try toDataURL
         try {
           const dataUrl = renderer.domElement.toDataURL('image/png');
-          // convert to blob
           const arr = dataUrl.split(','), mime = arr[0].match(/:(.*?);/)[1], bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
           for (let i = 0; i < n; i++) u8arr[i] = bstr.charCodeAt(i);
           resolve(new Blob([u8arr], { type: mime }));
@@ -117,12 +131,10 @@ export async function startPreview(preloaded = null) {
       }
     });
 
-    // restore UI
     document.documentElement.classList.remove('ui-hidden');
 
-    if (!blob) throw new Error('Screenshot capture failed (no blob)');
+    if (!blob) throw new Error('Screenshot capture failed');
 
-    // attempt download
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -130,12 +142,10 @@ export async function startPreview(preloaded = null) {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    // revoke after a bit
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     return { success: true, url };
   }
 
-  // expose cleanup
   function stop() {
     if (raf) cancelAnimationFrame(raf);
     window.removeEventListener('resize', onResize);
