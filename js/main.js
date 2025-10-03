@@ -8,22 +8,17 @@ let globalState = { preloaded: null, selectedMode: null, arPreviewHandle: null }
 async function init() {
   await startTitle();
 
-  // ensure side-ui and logs hidden at start
-  document.getElementById('side-ui').classList.add('initial-hidden');
-  document.getElementById('top-log').classList.add('initial-hidden');
-  document.getElementById('load-log').classList.add('initial-hidden');
-  document.getElementById('load-errors').classList.add('initial-hidden');
-  document.getElementById('ar-log').classList.add('initial-hidden');
-  document.getElementById('ar-status').classList.add('initial-hidden');
-  document.getElementById('debug').classList.add('initial-hidden');
-
+  // start button handler
   document.getElementById('btnStart').addEventListener('click', async () => {
-    // Show loading
+    // hide title UI
     document.getElementById('ui').style.display = 'none';
+
+    // show loading overlay
     const loading = document.getElementById('loading-screen');
     loading.style.display = 'flex';
     loading.setAttribute('aria-hidden', 'false');
 
+    // prepare references
     const logEl = document.getElementById('load-log');
     const topLog = document.getElementById('top-log');
     const errEl = document.getElementById('load-errors');
@@ -38,14 +33,15 @@ async function init() {
       setTimeout(() => { try { t.remove(); } catch (e) {} }, 7000);
     }
 
-    // ensure logs/UI elements become visible now (after Start pressed)
+    // reveal side-ui and logs now (after Start pressed)
     document.getElementById('side-ui').classList.remove('initial-hidden');
+    document.getElementById('side-ui-hidable').classList.remove('initial-hidden');
     document.getElementById('top-log').classList.remove('initial-hidden');
     document.getElementById('load-log').classList.remove('initial-hidden');
     document.getElementById('load-errors').classList.remove('initial-hidden');
     document.getElementById('debug').classList.remove('initial-hidden');
 
-    // prepare AR flow
+    // run prepareARFlow
     const result = await prepareARFlow({
       vrmPath: './assets/Aorin.vrm',
       glbPath: './assets/Aorin.glb',
@@ -59,7 +55,7 @@ async function init() {
     globalState.selectedMode = result.mode;
     pushLog('Final decision: mode=' + result.mode + ', success=' + result.success);
 
-    // hide loading overlay
+    // hide loading
     loading.style.display = 'none';
     loading.setAttribute('aria-hidden', 'true');
 
@@ -77,20 +73,34 @@ async function init() {
       return;
     }
 
-    // reveal AR-panel and make back button visible
+    // show ar-screen area
     document.getElementById('ar-screen').style.display = 'block';
     document.getElementById('ar-screen').setAttribute('aria-hidden', 'false');
     document.getElementById('ar-status').classList.remove('initial-hidden');
     document.getElementById('ar-log').classList.remove('initial-hidden');
 
-    // make back button visible (it is hidable but shown now)
-    document.getElementById('btnBackToTitle').classList.remove('initial-hidden');
+    // make side-ui-hidable visible (already removed initial-hidden), ensure toggle always visible
+    document.getElementById('btnBackToTitle').onclick = () => {
+      // cleanup preview
+      if (globalState.arPreviewHandle && typeof globalState.arPreviewHandle.stop === 'function') {
+        try { globalState.arPreviewHandle.stop(); } catch (e) { console.warn('stop failed', e); }
+      }
+      // hide preview UI and show title
+      document.getElementById('ar-screen').style.display = 'none';
+      document.getElementById('ui').style.display = 'block';
+      // reset side UI visibility: hide side-ui (except persistent toggle stays)
+      document.getElementById('side-ui').classList.add('initial-hidden');
+      document.getElementById('side-ui-hidable').classList.add('initial-hidden');
+      // restart title
+      startTitle().catch(() => {});
+    };
 
-    // bind side-ui buttons (toggle always available)
+    // Toggle UI (toggle hidable elements; btnToggle sits outside hidable so remains visible)
     document.getElementById('btnToggleUI').onclick = () => {
       document.documentElement.classList.toggle('ui-hidden');
     };
 
+    // Screenshot binding
     document.getElementById('btnScreenshot').onclick = async () => {
       const arLog = document.getElementById('ar-log');
       function aLog(m) { const d = document.createElement('div'); d.textContent = `[${new Date().toLocaleTimeString()}] ${m}`; arLog.prepend(d); }
@@ -106,26 +116,11 @@ async function init() {
         aLog('スクリーンショット: プレビュー未起動');
       }
     };
-
-    // back
-    document.getElementById('btnBackToTitle').onclick = () => {
-      // cleanup preview
-      if (globalState.arPreviewHandle && typeof globalState.arPreviewHandle.stop === 'function') {
-        try { globalState.arPreviewHandle.stop(); } catch (e) { console.warn('stop failed', e); }
-      }
-      // hide ar screen
-      document.getElementById('ar-screen').style.display = 'none';
-      // hide back button again
-      document.getElementById('btnBackToTitle').classList.add('initial-hidden');
-      // show title UI
-      document.getElementById('ui').style.display = 'block';
-      // restart title animation
-      startTitle().catch(() => {});
-    };
   });
 
-  // Always-available small bindings (toggle)
-  document.getElementById('btnToggleUI').onclick = () => document.documentElement.classList.toggle('ui-hidden');
+  // ensure toggle exists and bound even before Start (toggle only affects hidable elements)
+  const toggleBtn = document.getElementById('btnToggleUI');
+  if (toggleBtn) toggleBtn.onclick = () => document.documentElement.classList.toggle('ui-hidden');
 }
 
 window.addEventListener('load', init);
