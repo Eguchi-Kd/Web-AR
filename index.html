@@ -7,11 +7,11 @@
   <link rel="stylesheet" href="./css/styles.css" />
 </head>
 <body>
-  <!-- Three.js canvas area (used by title preview and AR preview) -->
+  <!-- Canvas container -->
   <div id="three-wrap"></div>
 
-  <!-- Title UI (initial screen) -->
-  <div id="ui" class="app-ui">
+  <!-- Title UI overlay (hidable content carries class `hidable`) -->
+  <div id="ui" class="app-ui hidable">
     <img id="bg" src="./assets/title_bg.png" alt="bg" />
     <img id="bubble" src="./assets/bubble.png" class="bubble-anim" alt="bubble" />
     <img id="title-img" src="./assets/title_text.png" alt="title" />
@@ -31,33 +31,36 @@
 
   <!-- AR experience screen (non-AR preview initially) -->
   <div id="ar-screen" class="ar-screen" aria-hidden="true">
-    <div id="ar-ui-top" class="ar-ui-top app-ui">
-      <button id="btnEnterAR" class="btn small">ARモード</button>
-      <button id="btnBackToTitle" class="btn small ghost">戻る</button>
-      <button id="btnToggleUI" class="btn small ghost">UI 表示/非表示</button>
-      <button id="btnScreenshot" class="btn small">スクショ</button>
-    </div>
-    <div id="ar-status" class="ar-status">AR準備中...</div>
+    <div id="ar-status" class="ar-status">プレビュー準備中...</div>
     <div id="ar-log" class="load-log"></div>
   </div>
 
-  <!-- Debug / small status -->
-  <div id="debug" class="app-ui">
+  <!-- Right-side vertical UI (persistent toggle and screenshot button).
+       Buttons that should be hidden when UI is toggled must have .hidable removed -->
+  <div id="side-ui" class="side-ui">
+    <button id="btnToggleUI" class="btn small">UI 表示/非表示</button>
+    <button id="btnScreenshot" class="btn small">スクショ</button>
+    <button id="btnBackToTitle" class="btn small ghost hidable">戻る</button>
+  </div>
+
+  <!-- Top log area -->
+  <div id="top-log" class="top-log"></div>
+
+  <!-- Debug small status (hidable) -->
+  <div id="debug" class="app-ui hidable">
     <div>Model preload: <span id="dbgModel">idle</span></div>
     <div>Pose index: <span id="dbgPose">0</span></div>
     <div id="dbgMsg" style="margin-top:6px; color:#f88"></div>
   </div>
 
-  <!-- Libraries -->
+  <!-- Libs -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.6.0"></script>
-
-  <!-- OrbitControls (UMD) required by non-AR preview -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
-  <!-- App scripts (module) -->
+  <!-- App -->
   <script type="module" src="./js/main.js"></script>
 </body>
 </html>
