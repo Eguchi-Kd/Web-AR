@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WebAR — Title & Load</title>
+  <title>WebAR — Title & Load & AR Preview</title>
   <link rel="stylesheet" href="./css/styles.css" />
 </head>
 <body>
@@ -19,7 +19,7 @@
     <div id="btn-area"><button id="btnStart" class="btn">Start</button></div>
   </div>
 
-  <!-- Loading screen (hidden initially) -->
+  <!-- Loading screen -->
   <div id="loading-screen" class="loading-container" aria-hidden="true">
     <div class="spinner-loader">
       <div class="spinner"></div>
@@ -35,7 +35,7 @@
       <button id="btnEnterAR" class="btn small">ARモード</button>
       <button id="btnBackToTitle" class="btn small ghost">戻る</button>
     </div>
-    <div id="ar-status" class="ar-status">AR準備完了（非ARプレビュー）</div>
+    <div id="ar-status" class="ar-status">AR準備中...</div>
     <div id="ar-log" class="load-log"></div>
   </div>
 
@@ -51,6 +51,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.6.0"></script>
+
+  <!-- OrbitControls (UMD) required by non-AR preview -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
   <!-- App scripts (module) -->
   <script type="module" src="./js/main.js"></script>
