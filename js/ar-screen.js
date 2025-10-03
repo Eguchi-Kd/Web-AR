@@ -1,19 +1,18 @@
 // js/ar-screen.js
-// Non-AR preview screen with touch rotate/pinch zoom, UI toggle, screenshot support.
+// Non-AR preview with touch-controlled OrbitControls, pinch zoom, UI toggle, screenshot support.
 
 export async function startPreview(preloaded = null) {
   const container = document.getElementById('three-wrap');
   if (!container) throw new Error('No #three-wrap container found');
 
-  // clear previous children
+  // cleanup
   while (container.firstChild) container.removeChild(container.firstChild);
 
-  // renderer
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  // create renderer with preserveDrawingBuffer for reliable screenshots
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.outputEncoding = THREE.sRGBEncoding;
-  // ensure touch events are delivered properly
   renderer.domElement.style.touchAction = 'none';
   container.appendChild(renderer.domElement);
 
@@ -25,41 +24,38 @@ export async function startPreview(preloaded = null) {
   const scene = new THREE.Scene();
 
   // lights
-  const ambient = new THREE.AmbientLight(0xffffff, 0.9);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.95);
   scene.add(ambient);
-  const directional = new THREE.DirectionalLight(0xffffff, 0.4);
-  directional.position.set(1, 1, 1).normalize();
-  scene.add(directional);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.4);
+  dir.position.set(1, 1, 1).normalize();
+  scene.add(dir);
 
-  // grid + axes
-  const gridHelper = new THREE.GridHelper(10, 10);
-  scene.add(gridHelper);
-  const axesHelper = new THREE.AxesHelper(0.5);
-  scene.add(axesHelper);
+  // grid & axes
+  const grid = new THREE.GridHelper(10, 10);
+  scene.add(grid);
+  const axes = new THREE.AxesHelper(0.5);
+  scene.add(axes);
 
-  // OrbitControls – UMD OrbitControls should have set THREE.OrbitControls
-  if (!THREE.OrbitControls && window.OrbitControls) {
-    THREE.OrbitControls = window.OrbitControls;
-  }
-  if (!THREE.OrbitControls) {
-    console.warn('OrbitControls not found; preview will not have orbit controls.');
-  }
+  // OrbitControls (UMD)
+  if (!THREE.OrbitControls && window.OrbitControls) THREE.OrbitControls = window.OrbitControls;
+  if (!THREE.OrbitControls) console.warn('OrbitControls missing');
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0.85, 0);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.screenSpacePanning = true;
   controls.enablePan = false;
-  controls.enableZoom = true; // allow pinch zoom
+  controls.enableZoom = true;
   controls.minDistance = 0.6;
   controls.maxDistance = 6;
+  controls.rotateSpeed = 0.6;
+  controls.zoomSpeed = 1.0;
   controls.update();
 
-  // add preloaded model or placeholder
+  // add model or placeholder
   let addedModel = null;
   try {
     if (preloaded && preloaded.vrm) {
-      // note: adding VRM instance's scene directly; if it was attached elsewhere this may be problematic
       scene.add(preloaded.vrm.scene);
       addedModel = preloaded.vrm.scene;
     } else if (preloaded && preloaded.gltf && preloaded.gltf.scene) {
@@ -73,24 +69,21 @@ export async function startPreview(preloaded = null) {
       scene.add(cyl);
       addedModel = cyl;
     }
-  } catch (e) {
-    console.warn('Failed to add preloaded model to preview:', e);
-  }
+  } catch (e) { console.warn('add model error', e); }
 
-  // Set the three-wrap background to light blue for preview
-  const prevBg = document.getElementById('three-wrap').style.background || '';
-  document.getElementById('three-wrap').style.background = '#bfefff';
+  // set background to light blue for preview
+  const prevBg = container.style.background || '';
+  container.style.background = '#bfefff';
 
   // animation loop
-  let rafId = null;
+  let raf = null;
   function animate() {
-    rafId = requestAnimationFrame(animate);
+    raf = requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
   }
   animate();
 
-  // handle resize
   function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -98,61 +91,58 @@ export async function startPreview(preloaded = null) {
   }
   window.addEventListener('resize', onResize);
 
-  // UI toggle and screenshot handlers (exposed functions)
-  async function captureScreenshot(options = { downloadName: 'screenshot.png' }) {
-    // hide UI
+  // screenshot function: hides hidable UI, ensures a frame is rendered, then capture
+  async function captureScreenshot(filename = 'screenshot.png') {
+    // hide hidable UI
     document.documentElement.classList.add('ui-hidden');
-    await new Promise(resolve => setTimeout(resolve, 80)); // allow paint
+    // wait two animation frames so UI is hidden and next frame renders
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
 
-    let dataUrl;
-    try {
-      dataUrl = renderer.domElement.toDataURL('image/png');
-    } catch (e) {
-      console.warn('toDataURL failed:', e);
-      document.documentElement.classList.remove('ui-hidden');
-      throw e;
-    }
+    // capture via toBlob for better memory
+    const blob = await new Promise((resolve) => {
+      try {
+        renderer.domElement.toBlob((b) => resolve(b), 'image/png');
+      } catch (e) {
+        // as fallback, try toDataURL
+        try {
+          const dataUrl = renderer.domElement.toDataURL('image/png');
+          // convert to blob
+          const arr = dataUrl.split(','), mime = arr[0].match(/:(.*?);/)[1], bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
+          for (let i = 0; i < n; i++) u8arr[i] = bstr.charCodeAt(i);
+          resolve(new Blob([u8arr], { type: mime }));
+        } catch (e2) {
+          resolve(null);
+        }
+      }
+    });
 
     // restore UI
     document.documentElement.classList.remove('ui-hidden');
 
-    // attempt to download via anchor (works on many platforms)
-    try {
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = options.downloadName || 'screenshot.png';
-      // iOS Safari ignores download — fallback will open
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      // Some browsers won't download but opening is still helpful
-      return { success: true, dataUrl };
-    } catch (e) {
-      // fallback: open in new tab (user can long-press save on iOS)
-      try {
-        window.open(dataUrl, '_blank');
-        return { success: true, dataUrl, openedNewTab: true };
-      } catch (e2) {
-        console.warn('Failed to open screenshot in new tab:', e2);
-        return { success: false, error: e2 };
-      }
-    }
+    if (!blob) throw new Error('Screenshot capture failed (no blob)');
+
+    // attempt download
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // revoke after a bit
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    return { success: true, url };
   }
 
-  // expose stop to cleanup
+  // expose cleanup
   function stop() {
-    if (rafId) cancelAnimationFrame(rafId);
+    if (raf) cancelAnimationFrame(raf);
     window.removeEventListener('resize', onResize);
-    try { renderer.domElement.remove(); } catch(e){}
-    try { renderer.dispose(); } catch(e){}
-    // restore background
-    document.getElementById('three-wrap').style.background = prevBg;
+    try { renderer.domElement.remove(); } catch (e) {}
+    try { renderer.dispose(); } catch (e) {}
+    container.style.background = prevBg;
   }
 
-  return {
-    renderer, scene, camera, controls, addedModel,
-    captureScreenshot,
-    stop
-  };
+  return { renderer, scene, camera, controls, addedModel, captureScreenshot, stop };
 }
