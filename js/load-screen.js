@@ -1,26 +1,32 @@
 // js/load-screen.js
-import { preloadVRM } from './three-vrm-loader.js';
-
-/**
- * prepareARFlow(options)
- * - Preloads assets and determines best AR mode for current device.
- * - Returns an object: { success: boolean, mode: string|null, logs: [], errors: [] }
- *   mode is one of: 'ios-quicklook', 'android-webxr', 'scene-viewer', 'model-viewer-fallback'
- */
+// prepareARFlow: robust asset checking and preload
 export async function prepareARFlow({ vrmPath = './assets/Aorin.vrm', glbPath = './assets/Aorin.glb', usdzPath = './assets/Aorin.usdz', logCallback = null } = {}) {
   const logs = [];
   const errors = [];
-  function log(m) { logs.push(String(m)); if (logCallback) logCallback(String(m)); }
-  function err(m) { errors.push(String(m)); if (logCallback) logCallback(String(m)); }
+  function log(m) { logs.push(String(m)); if (logCallback) logCallback && logCallback(String(m)); }
+  function err(m) { errors.push(String(m)); if (logCallback) logCallback && logCallback(String(m)); }
 
-  // resolve platform
+  // platform detection
   const ua = navigator.userAgent || '';
   const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isAndroid = /Android/.test(ua);
-  log(`Platform check: isIOS=${isIOS}, isAndroid=${isAndroid}`);
+  log(`Platform: isIOS=${isIOS}, isAndroid=${isAndroid}`);
 
-  // check existence via HEAD (fallback to GET range if needed)
-  async function exists(url) {
+  // helper to resolve URL robustly based on page location
+  function resolveAssetUrl(pathOrUrl) {
+    try {
+      // if absolute URL, return as-is
+      const maybe = new URL(pathOrUrl, location.href);
+      return maybe.href;
+    } catch (e) {
+      // fallback - just return path
+      return pathOrUrl;
+    }
+  }
+
+  // check resource existence (HEAD -> fallback GET range)
+  async function exists(path) {
+    const url = resolveAssetUrl(path);
     try {
       const r = await fetch(url, { method: 'HEAD' });
       if (r.ok) return true;
@@ -30,41 +36,67 @@ export async function prepareARFlow({ vrmPath = './assets/Aorin.vrm', glbPath = 
       }
       return false;
     } catch (e) {
-      return false;
+      // try GET as last resort
+      try {
+        const r = await fetch(url, { method: 'GET' });
+        return r.ok;
+      } catch (e2) {
+        return false;
+      }
     }
   }
 
-  // Check assets
-  log('Checking assets...');
+  log('Checking assets (resolved URLs)...');
+  const vrmUrl = resolveAssetUrl(vrmPath);
+  const glbUrl = resolveAssetUrl(glbPath);
+  const usdzUrl = resolveAssetUrl(usdzPath);
+  log(`Resolved: vrm=${vrmUrl}, glb=${glbUrl}, usdz=${usdzUrl}`);
+
   const vrmExists = await exists(vrmPath);
   const glbExists = await exists(glbPath);
   const usdzExists = await exists(usdzPath);
-  log(`Asset exist: vrm=${vrmExists}, glb=${glbExists}, usdz=${usdzExists}`);
+  log(`Asset existence: vrm=${vrmExists}, glb=${glbExists}, usdz=${usdzExists}`);
 
-  // Preload VRM if available (useful for preview + AR placement)
-  let preloaded = { vrm: null, gltf: null };
+  // Preload assets
+  const preloaded = { vrm: null, vrmScene: null, gltf: null, usdz: !!usdzExists };
+
+  // preload VRM (we'll try parse as in three-vrm-loader)
   if (vrmExists) {
     log('Preloading VRM...');
     try {
-      const res = await preloadVRM(vrmPath);
-      preloaded.vrm = res.vrm;
-      preloaded.vrmScene = res.scene;
-      log('VRM preloaded (instance available)');
+      // reuse GLTFLoader parse approach to avoid loader.load async URL issues
+      const resp = await fetch(vrmUrl);
+      if (!resp.ok) throw new Error('VRM fetch HTTP ' + resp.status);
+      const ab = await resp.arrayBuffer();
+      if (!ab || ab.byteLength < 20) throw new Error('VRM data too small: ' + (ab ? ab.byteLength : 0));
+      // parse
+      const gltf = await new Promise((resolve, reject) => {
+        try {
+          const loader = new THREE.GLTFLoader();
+          loader.parse(ab, '', (g) => resolve(g), (err) => reject(err));
+        } catch (e) {
+          reject(e);
+        }
+      });
+      // convert to VRM
+      const vrm = await THREE.VRM.from(gltf);
+      preloaded.vrm = vrm;
+      preloaded.vrmScene = vrm.scene;
+      log('VRM parsed and VRM instance created');
     } catch (e) {
       err('VRM preload failed: ' + e);
     }
   } else {
-    log('No VRM to preload.');
+    log('No VRM present; skipping VRM preload.');
   }
 
-  // Preload GLB (parse into gltf) if present (for scene-viewer fallback / android scene viewer)
+  // Preload GLB (for scene-viewer / model-viewer fallback)
   if (glbExists) {
     log('Preloading GLB...');
     try {
-      const r = await fetch(glbPath);
-      if (!r.ok) throw new Error('GLB fetch HTTP '+r.status);
-      const ab = await r.arrayBuffer();
-      // parse via GLTFLoader.parse - using global THREE.GLTFLoader
+      const resp = await fetch(glbUrl);
+      if (!resp.ok) throw new Error('GLB fetch HTTP ' + resp.status);
+      const ab = await resp.arrayBuffer();
       const gltf = await new Promise((resolve, reject) => {
         try {
           const loader = new THREE.GLTFLoader();
@@ -79,49 +111,43 @@ export async function prepareARFlow({ vrmPath = './assets/Aorin.vrm', glbPath = 
       err('GLB preload failed: ' + e);
     }
   } else {
-    log('No GLB to preload.');
+    log('No GLB present.');
   }
 
-  // Decide best mode
+  // Decide mode
   let mode = null;
   try {
     if (isIOS && usdzExists) {
       mode = 'ios-quicklook';
-      log('Selecting mode: iOS Quick Look (usdZ)');
+      log('Mode -> ios-quicklook');
     } else if (isAndroid) {
-      // check WebXR support
       if (navigator.xr && navigator.xr.isSessionSupported) {
         try {
           const supported = await navigator.xr.isSessionSupported('immersive-ar');
           if (supported) {
             mode = 'android-webxr';
-            log('Android: WebXR immersive-ar supported -> android-webxr');
+            log('Mode -> android-webxr (WebXR supported)');
           } else {
-            // fallback to scene-viewer if glb present
-            if (glbExists) {
-              mode = 'scene-viewer';
-              log('Android: WebXR not supported -> scene-viewer (glb) fallback');
-            } else {
-              mode = 'model-viewer-fallback';
-              log('Android: WebXR not supported and no glb -> model-viewer fallback');
-            }
+            if (glbExists) { mode = 'scene-viewer'; log('Mode -> scene-viewer (WebXR unsupported, GLB exists)'); }
+            else { mode = 'model-viewer-fallback'; log('Mode -> model-viewer-fallback (WebXR unsupported, no GLB)'); }
           }
         } catch (e) {
-          err('isSessionSupported check failed: ' + e);
-          if (glbExists) { mode = 'scene-viewer'; log('Fallback: scene-viewer'); } else { mode = 'model-viewer-fallback'; }
+          err('isSessionSupported error: ' + e);
+          mode = glbExists ? 'scene-viewer' : 'model-viewer-fallback';
         }
       } else {
-        if (glbExists) { mode = 'scene-viewer'; log('Android: navigator.xr not available -> scene-viewer fallback'); }
-        else { mode = 'model-viewer-fallback'; log('Android: navigator.xr not available -> model-viewer fallback'); }
+        mode = glbExists ? 'scene-viewer' : 'model-viewer-fallback';
+        log('navigator.xr not available; fallback mode: ' + mode);
       }
     } else {
-      // other platform: if glb exists, model-viewer can show on-page or scene-viewer may be used
-      if (glbExists) { mode = 'model-viewer-fallback'; log('Other platform: using model-viewer with glb'); }
-      else if (usdzExists) { mode = 'ios-quicklook'; log('Other platform but usdz exists: Quick Look'); }
-      else { mode = 'model-viewer-fallback'; log('Other platform: model-viewer fallback (preview only)'); }
+      // other platforms
+      if (glbExists) mode = 'model-viewer-fallback';
+      else if (usdzExists) mode = 'ios-quicklook';
+      else mode = 'model-viewer-fallback';
+      log('Other platform fallback mode: ' + mode);
     }
   } catch (e) {
-    err('Error determining mode: ' + e);
+    err('Mode decision error: ' + e);
     mode = 'model-viewer-fallback';
   }
 
