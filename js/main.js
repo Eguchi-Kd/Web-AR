@@ -8,8 +8,17 @@ let globalState = { preloaded: null, selectedMode: null, arPreviewHandle: null }
 async function init() {
   await startTitle();
 
-  // Start button -> load -> preview
+  // ensure side-ui and logs hidden at start
+  document.getElementById('side-ui').classList.add('initial-hidden');
+  document.getElementById('top-log').classList.add('initial-hidden');
+  document.getElementById('load-log').classList.add('initial-hidden');
+  document.getElementById('load-errors').classList.add('initial-hidden');
+  document.getElementById('ar-log').classList.add('initial-hidden');
+  document.getElementById('ar-status').classList.add('initial-hidden');
+  document.getElementById('debug').classList.add('initial-hidden');
+
   document.getElementById('btnStart').addEventListener('click', async () => {
+    // Show loading
     document.getElementById('ui').style.display = 'none';
     const loading = document.getElementById('loading-screen');
     loading.style.display = 'flex';
@@ -18,16 +27,23 @@ async function init() {
     const logEl = document.getElementById('load-log');
     const topLog = document.getElementById('top-log');
     const errEl = document.getElementById('load-errors');
+
     function pushLog(m) {
       const d = document.createElement('div');
       d.textContent = `[${new Date().toLocaleTimeString()}] ${m}`;
       logEl.prepend(d);
-      // also show short summary on top-log
       const t = document.createElement('div');
       t.textContent = m;
       topLog.prepend(t);
-      setTimeout(() => { try { t.remove(); } catch(e){} }, 6000);
+      setTimeout(() => { try { t.remove(); } catch (e) {} }, 7000);
     }
+
+    // ensure logs/UI elements become visible now (after Start pressed)
+    document.getElementById('side-ui').classList.remove('initial-hidden');
+    document.getElementById('top-log').classList.remove('initial-hidden');
+    document.getElementById('load-log').classList.remove('initial-hidden');
+    document.getElementById('load-errors').classList.remove('initial-hidden');
+    document.getElementById('debug').classList.remove('initial-hidden');
 
     // prepare AR flow
     const result = await prepareARFlow({
@@ -43,32 +59,34 @@ async function init() {
     globalState.selectedMode = result.mode;
     pushLog('Final decision: mode=' + result.mode + ', success=' + result.success);
 
+    // hide loading overlay
     loading.style.display = 'none';
     loading.setAttribute('aria-hidden', 'true');
 
-    // stop title rendering
+    // stop title renderer
     try { stopTitle(); } catch (e) { console.warn('stopTitle error', e); }
 
     // start preview
-    let preview = null;
     try {
-      preview = await startPreview(result.preloaded);
+      const preview = await startPreview(result.preloaded);
       globalState.arPreviewHandle = preview;
     } catch (e) {
       console.error('Failed to start preview:', e);
       document.getElementById('ar-status').textContent = 'プレビュー開始失敗: ' + e;
+      document.getElementById('ar-status').classList.remove('initial-hidden');
       return;
     }
 
-    // show ar-screen
-    const arScreen = document.getElementById('ar-screen');
-    arScreen.style.display = 'block';
-    arScreen.setAttribute('aria-hidden', 'false');
+    // reveal AR-panel and make back button visible
+    document.getElementById('ar-screen').style.display = 'block';
+    document.getElementById('ar-screen').setAttribute('aria-hidden', 'false');
+    document.getElementById('ar-status').classList.remove('initial-hidden');
+    document.getElementById('ar-log').classList.remove('initial-hidden');
 
-    // show Back button (hidable)
-    document.getElementById('btnBackToTitle').classList.remove('hidable');
+    // make back button visible (it is hidable but shown now)
+    document.getElementById('btnBackToTitle').classList.remove('initial-hidden');
 
-    // bind side-ui buttons
+    // bind side-ui buttons (toggle always available)
     document.getElementById('btnToggleUI').onclick = () => {
       document.documentElement.classList.toggle('ui-hidden');
     };
@@ -79,43 +97,35 @@ async function init() {
       if (globalState.arPreviewHandle && typeof globalState.arPreviewHandle.captureScreenshot === 'function') {
         aLog('スクリーンショット開始...');
         try {
-          const r = await globalState.arPreviewHandle.captureScreenshot('screenshot.png');
+          await globalState.arPreviewHandle.captureScreenshot('screenshot.png');
           aLog('スクリーンショット完了');
         } catch (e) {
           aLog('スクリーンショット失敗: ' + e);
         }
       } else {
-        aLog('スクリーンショット機能は未使用です');
+        aLog('スクリーンショット: プレビュー未起動');
       }
     };
 
-    // back to title
+    // back
     document.getElementById('btnBackToTitle').onclick = () => {
-      const arScreen = document.getElementById('ar-screen');
-      arScreen.style.display = 'none';
-      document.getElementById('ui').style.display = 'block';
+      // cleanup preview
       if (globalState.arPreviewHandle && typeof globalState.arPreviewHandle.stop === 'function') {
         try { globalState.arPreviewHandle.stop(); } catch (e) { console.warn('stop failed', e); }
       }
+      // hide ar screen
+      document.getElementById('ar-screen').style.display = 'none';
       // hide back button again
-      document.getElementById('btnBackToTitle').classList.add('hidable');
-      // restart title screen
+      document.getElementById('btnBackToTitle').classList.add('initial-hidden');
+      // show title UI
+      document.getElementById('ui').style.display = 'block';
+      // restart title animation
       startTitle().catch(() => {});
     };
   });
 
-  // keep Toggle UI and Screenshot buttons bound even before preview
+  // Always-available small bindings (toggle)
   document.getElementById('btnToggleUI').onclick = () => document.documentElement.classList.toggle('ui-hidden');
-  document.getElementById('btnScreenshot').onclick = async () => {
-    const arLog = document.getElementById('ar-log');
-    function aLog(m) { const d = document.createElement('div'); d.textContent = `[${new Date().toLocaleTimeString()}] ${m}`; arLog.prepend(d); }
-    if (globalState.arPreviewHandle && typeof globalState.arPreviewHandle.captureScreenshot === 'function') {
-      aLog('スクリーンショット開始...');
-      try { await globalState.arPreviewHandle.captureScreenshot('screenshot.png'); aLog('スクリーンショット完了'); } catch (e) { aLog('スクリーンショット失敗: ' + e); }
-    } else {
-      aLog('スクリーンショット: プレビュー未起動');
-    }
-  };
 }
 
 window.addEventListener('load', init);
