@@ -1,4 +1,4 @@
-// title-screen.js
+// js/title-screen.js
 import { initThree, preloadVRM, createPlaceholder } from './three-vrm-loader.js';
 
 // File paths (relative)
@@ -16,7 +16,7 @@ let vrmModel = null;
 let vrmInstance = null;
 let modelReady = false;
 
-let rotateSpeed = 0.0025; // rad per ms approx -> tuned for mobile
+let rotateSpeed = 0.0025; // rotation per ms scaled for mobile
 const poses = []; // loaded pose JSONs
 let poseIndex = 0;
 let lastPoseSwitch = 0;
@@ -26,43 +26,32 @@ export async function startTitle() {
   const th = await initThree('three-wrap');
   scene = th.scene; camera = th.camera; renderer = th.renderer;
 
-  // Preload VRM model
-  const vrmUrl = DATA_VRM;
+  // Preload VRM model (attempt and fallback if any error)
   try {
-    document.getElementById('dbgModel').textContent = 'checking...';
-    const exists = await fetch(vrmUrl, { method:'HEAD' }).then(r => r.ok).catch(()=>false);
-    if (exists) {
-      document.getElementById('dbgModel').textContent = 'loading VRM...';
-      const res = await preloadVRM(vrmUrl);
-      vrmInstance = res.vrm;
-      vrmModel = res.scene;
-      // Tune scale & position for smartphone portrait view
-      vrmModel.scale.setScalar(1.0);
-      vrmModel.position.set(0, 0, 0);
-      scene.add(vrmModel);
-      modelReady = true;
-      document.getElementById('dbgModel').textContent = 'VRM loaded';
-    } else {
-      document.getElementById('dbgModel').textContent = 'VRM not found, using placeholder';
-      const ph = createPlaceholder();
-      scene.add(ph);
-      vrmModel = ph;
-      modelReady = true;
-    }
-  } catch(e){
-    console.error(e);
-    document.getElementById('dbgModel').textContent = 'load error, placeholder';
+    document.getElementById('dbgModel').textContent = 'loading VRM...';
+    const res = await preloadVRM(DATA_VRM);
+    vrmInstance = res.vrm;
+    vrmModel = res.scene;
+    vrmModel.scale.setScalar(1.0);
+    vrmModel.position.set(0, 0, 0);
+    scene.add(vrmModel);
+    modelReady = true;
+    document.getElementById('dbgModel').textContent = 'VRM loaded';
+  } catch (e) {
+    // fallback placeholder and report error
+    console.warn('VRM preload failed:', e);
+    document.getElementById('dbgModel').textContent = 'VRM load failed, using placeholder';
+    document.getElementById('dbgMsg').textContent = String(e).slice(0, 200);
     const ph = createPlaceholder();
     scene.add(ph);
     vrmModel = ph;
     modelReady = true;
-    document.getElementById('dbgMsg').textContent = String(e).slice(0,200);
   }
 
-  // preload pose files
+  // preload pose files (continue even if some fail)
   await loadPoses();
 
-  // initialize pose timing
+  // initialize pose timing and start with first pose (if any)
   lastPoseSwitch = performance.now();
   poseIndex = -1;
   switchToNextPose();
@@ -72,20 +61,25 @@ export async function startTitle() {
 }
 
 async function loadPoses() {
-  // load JSON pose definitions; skip missing files
   for (let i = 0; i < POSE_FILES.length; i++) {
     try {
       const r = await fetch(POSE_FILES[i]);
-      if (!r.ok) { console.warn('Pose file not found:', POSE_FILES[i]); continue; }
+      if (!r.ok) {
+        console.warn('Pose file not found:', POSE_FILES[i]);
+        continue;
+      }
       const j = await r.json();
-      poses.push(j.pose || j);
+      // support both structure: { pose: {...} } and direct object
+      const poseObj = (j && j.pose) ? j.pose : j;
+      poses.push(poseObj);
       console.log('Loaded pose', POSE_FILES[i]);
-    } catch(e) {
+    } catch (e) {
       console.warn('Failed loading pose', POSE_FILES[i], e);
     }
   }
   if (poses.length === 0) {
     console.warn('No poses loaded. Using idle pose only.');
+    document.getElementById('dbgMsg').textContent = 'No pose files found';
   } else {
     document.getElementById('dbgMsg').textContent = `Loaded ${poses.length} pose(s)`;
   }
@@ -99,56 +93,70 @@ function switchToNextPose() {
   lastPoseSwitch = performance.now();
 }
 
+/**
+ * applyPose(poseObj)
+ * - poseObj has structure: { boneKey: { rotation: [x,y,z,w] }, ... }
+ * - We try several ways to find the corresponding bone node:
+ *    1) vrmInstance.humanoid.getBoneNode(boneKey) if available
+ *    2) scene.getObjectByName(boneKey)
+ *    3) try capitalized name boneKey[0].toUpperCase() + rest
+ */
 function applyPose(poseObj) {
-  // poseObj maps bone keys (like rightUpperLeg) to { rotation: [x,y,z,w] }
   if (!vrmInstance || !vrmInstance.humanoid) return;
   const humanoid = vrmInstance.humanoid;
   for (const boneKey in poseObj) {
     try {
       const data = poseObj[boneKey];
       if (!data || !data.rotation) continue;
-      // try to get bone node; first attempt humanoid.getBoneNode with the key
+
       let node = null;
       try {
         if (typeof humanoid.getBoneNode === 'function') {
           node = humanoid.getBoneNode(boneKey);
         }
-      } catch(e) {
+      } catch (e) {
         // ignore
       }
-      // fallback: search by common node name in scene
+
       if (!node) {
         node = vrmInstance.scene.getObjectByName(boneKey) || vrmInstance.scene.getObjectByProperty('name', boneKey);
       }
+
       if (!node) {
-        // sometimes bone keys are LowerCamelCase for VRM schema; try common humanoid mapping
+        // try capitalized variant (RightUpperLeg vs rightUpperLeg)
         const alt = boneKey.charAt(0).toUpperCase() + boneKey.slice(1);
         try {
           node = humanoid.getBoneNode ? humanoid.getBoneNode(alt) : null;
-        } catch(e){}
+        } catch (e) { node = null; }
       }
+
       if (!node) {
+        // not found - skip
         continue;
       }
+
       const q = data.rotation;
       if (Array.isArray(q) && q.length >= 4) {
+        // set quaternion directly
         node.quaternion.set(q[0], q[1], q[2], q[3]);
       }
-    } catch(e) {
+    } catch (e) {
       console.warn('applyPose error on bone', boneKey, e);
     }
   }
 }
 
 function render(time) {
-  // rotate model slowly around Y for idle motion
+  // rotate model slowly
   if (vrmModel) {
-    // rotation amount scaled
+    // rotate by a small amount each frame (time independent-ish)
     vrmModel.rotation.y += rotateSpeed * 16;
   }
-  // handle pose switching every POSE_INTERVAL ms
+
+  // switch pose periodically
   if (performance.now() - lastPoseSwitch > POSE_INTERVAL) {
     switchToNextPose();
   }
+
   renderer.render(scene, camera);
 }
