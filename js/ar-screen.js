@@ -1,8 +1,5 @@
 // js/ar-screen.js
-// ESM version: imports OrbitControls as module to avoid timing issues.
-// Note: this file is an ES module loaded by main.js.
-
-import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/controls/OrbitControls.js';
+// ESM module but uses global THREE and UMD OrbitControls (THREE.OrbitControls)
 
 export async function startPreview(preloaded = null) {
   const container = document.getElementById('three-wrap');
@@ -33,39 +30,34 @@ export async function startPreview(preloaded = null) {
   dir.position.set(1, 1, 1).normalize();
   scene.add(dir);
 
-  // grid + axes
+  // grid & axes
   const grid = new THREE.GridHelper(10, 10);
   scene.add(grid);
   const axes = new THREE.AxesHelper(0.5);
   scene.add(axes);
 
-  // Controls (use imported OrbitControls)
-  let controls;
+  // Controls — use UMD OrbitControls attached to THREE
+  let controls = null;
   try {
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 0.85, 0);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.screenSpacePanning = true;
-    controls.enablePan = false;
-    controls.enableZoom = true;
-    controls.minDistance = 0.6;
-    controls.maxDistance = 6;
-    controls.rotateSpeed = 0.6;
-    controls.zoomSpeed = 1.0;
-    controls.update();
-    console.log('OrbitControls initialized (ESM).');
-  } catch (e) {
-    console.warn('OrbitControls ESM init failed. Falling back to UMD (if present).', e);
-    if (window.OrbitControls) {
-      controls = new window.OrbitControls(camera, renderer.domElement);
-      controls.update();
-    } else if (THREE.OrbitControls) {
+    if (THREE && THREE.OrbitControls) {
       controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 0.85, 0);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.screenSpacePanning = true;
+      controls.enablePan = false;
+      controls.enableZoom = true;
+      controls.minDistance = 0.6;
+      controls.maxDistance = 6;
+      controls.rotateSpeed = 0.6;
+      controls.zoomSpeed = 1.0;
       controls.update();
+      console.log('OrbitControls (UMD) initialized.');
     } else {
-      console.warn('No OrbitControls available.');
+      console.warn('THREE.OrbitControls not found (UMD). Controls disabled.');
     }
+  } catch (e) {
+    console.warn('OrbitControls initialization error:', e);
   }
 
   // add model or placeholder
@@ -93,7 +85,7 @@ export async function startPreview(preloaded = null) {
   const prevBg = container.style.background || '';
   container.style.background = '#bfefff';
 
-  // render loop
+  // animation loop
   let raf = null;
   function animate() {
     raf = requestAnimationFrame(animate);
@@ -109,10 +101,9 @@ export async function startPreview(preloaded = null) {
   }
   window.addEventListener('resize', onResize);
 
-  // screenshot: hide .hidable, render next frame, capture to blob
+  // screenshot: hide .hidable, render next frames, capture to blob
   async function captureScreenshot(filename = 'screenshot.png') {
     document.documentElement.classList.add('ui-hidden');
-    // wait two frames to ensure UI is hidden and canvas updated
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
 
