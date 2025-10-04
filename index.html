@@ -5,6 +5,29 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>WebAR — Title & Load & AR Preview</title>
   <link rel="stylesheet" href="./css/styles.css" />
+
+  <!-- Small override styles to ensure canvas receives pointer events.
+       Non-interactive overlays are made pointer-events: none so they don't block input.
+       Side UI (buttons) remain interactive. -->
+  <style>
+    /* Treat these overlay containers as visual-only unless they explicitly contain interactive controls */
+    .app-ui,        /* title UI, debug panel, etc. */
+    .ar-screen,     /* ar-screen overlay container */
+    .top-log,       /* top summary log */
+    .load-log,      /* logs container */
+    #loading-screen /* loading overlay */ {
+      pointer-events: none !important;
+    }
+
+    /* Side UI must remain interactive (buttons), so enable pointer events only for it and its descendants */
+    #side-ui, #side-ui * {
+      pointer-events: auto !important;
+    }
+
+    /* Ensure the canvas we create fills the viewport and is positioned to receive events */
+    #three-wrap { position:fixed; inset:0; z-index:0; }
+    #three-wrap canvas { position:fixed; inset:0; width:100% !important; height:100% !important; z-index:5; touch-action:none; }
+  </style>
 </head>
 <body>
   <div id="three-wrap"></div>
@@ -19,7 +42,7 @@
   </div>
 
   <!-- Loading -->
-  <div id="loading-screen" class="loading-container" aria-hidden="true">
+  <div id="loading-screen" class="loading-container app-ui" aria-hidden="true">
     <div class="spinner-loader"><div class="spinner"></div></div>
     <div class="loading-text">読み込み中...</div>
     <div id="load-log" class="load-log initial-hidden hidable"></div>
@@ -27,7 +50,7 @@
   </div>
 
   <!-- AR preview -->
-  <div id="ar-screen" class="ar-screen" aria-hidden="true">
+  <div id="ar-screen" class="ar-screen app-ui" aria-hidden="true">
     <div id="ar-status" class="ar-status initial-hidden hidable">プレビュー準備中...</div>
     <div id="ar-log" class="load-log initial-hidden hidable"></div>
   </div>
@@ -44,7 +67,7 @@
   </div>
 
   <!-- Top log -->
-  <div id="top-log" class="top-log initial-hidden hidable"></div>
+  <div id="top-log" class="top-log initial-hidden hidable app-ui"></div>
 
   <!-- Debug -->
   <div id="debug" class="app-ui hidable initial-hidden">
@@ -54,8 +77,6 @@
   </div>
 
   <!-- Libraries: Three (UMD), GLTFLoader (UMD), three-vrm (UMD), OrbitControls (UMD) -->
-  <!-- NOTE: We intentionally DO NOT load model-viewer at page load to avoid module-import conflicts.
-       model-viewer will be loaded dynamically only when needed (Quick Look). -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.6.0"></script>
