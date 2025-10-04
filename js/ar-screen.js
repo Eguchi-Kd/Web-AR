@@ -1,15 +1,13 @@
 // js/ar-screen.js
-// Non-AR preview with robust custom gesture controls (pointer events)
+// Non-AR preview with custom gestures, plus AR-mode starter that can trigger Quick Look (iOS) or WebXR (Android).
 
 export async function startPreview(preloaded = null) {
   const container = document.getElementById('three-wrap');
   if (!container) throw new Error('No #three-wrap container found');
 
-  // Debug: log THREE presence and identity
   console.log('startPreview: window.THREE exists?', !!window.THREE);
   if (window.THREE) {
     try { console.log('THREE.REVISION =', THREE.REVISION); } catch (e) {}
-    try { console.log('THREE obj identity:', THREE); } catch (e) {}
   }
 
   // cleanup previous children
@@ -20,11 +18,8 @@ export async function startPreview(preloaded = null) {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.outputEncoding = THREE.sRGBEncoding;
-
-  // ensure touches/pointer events go to canvas (and prevent page gestures)
   renderer.domElement.style.touchAction = 'none';
   renderer.domElement.style.userSelect = 'none';
-  // position canvas full-screen and ensure it can receive pointer events
   renderer.domElement.style.position = 'fixed';
   renderer.domElement.style.top = '0';
   renderer.domElement.style.left = '0';
@@ -32,14 +27,11 @@ export async function startPreview(preloaded = null) {
   renderer.domElement.style.height = '100%';
   renderer.domElement.style.zIndex = '5';
   renderer.domElement.style.pointerEvents = 'auto';
-
   container.appendChild(renderer.domElement);
 
-  // camera
+  // camera / scene
   const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(0, 1.1, 3);
-
-  // scene
   const scene = new THREE.Scene();
 
   // lights
@@ -55,7 +47,7 @@ export async function startPreview(preloaded = null) {
   const axes = new THREE.AxesHelper(0.5);
   scene.add(axes);
 
-  // initial target and spherical state
+  // initial spherical controls state
   const target = new THREE.Vector3(0, 0.85, 0);
   const offset = new THREE.Vector3().subVectors(camera.position, target);
   const spherical = new THREE.Spherical().setFromVector3(offset);
@@ -64,15 +56,21 @@ export async function startPreview(preloaded = null) {
   const minRadius = 0.6;
   const maxRadius = 6.0;
 
-  // add model or placeholder
+  // add preloaded model (if any) to preview - scale to 50% (multiply by 0.5)
   let addedModel = null;
   try {
     if (preloaded && preloaded.vrm) {
-      scene.add(preloaded.vrm.scene);
-      addedModel = preloaded.vrm.scene;
+      // if preloaded.vrm is VRM object or scene
+      const vm = preloaded.vrm;
+      const sceneObj = vm.scene ? vm.scene : vm;
+      sceneObj.scale.multiplyScalar(0.5); // 50% smaller
+      scene.add(sceneObj);
+      addedModel = sceneObj;
     } else if (preloaded && preloaded.gltf && preloaded.gltf.scene) {
-      scene.add(preloaded.gltf.scene);
-      addedModel = preloaded.gltf.scene;
+      const sc = preloaded.gltf.scene;
+      sc.scale.multiplyScalar(0.5);
+      scene.add(sc);
+      addedModel = sc;
     } else {
       const geo = new THREE.CylinderGeometry(0.4, 0.4, 1.2, 32);
       const mat = new THREE.MeshStandardMaterial({ color: 0x9b8cff, metalness: 0.2, roughness: 0.6 });
@@ -85,11 +83,11 @@ export async function startPreview(preloaded = null) {
     console.warn('add model error', e);
   }
 
-  // set background to light blue
+  // background
   const prevBg = container.style.background || '';
   container.style.background = '#bfefff';
 
-  // Animation loop
+  // render loop
   let rafId = null;
   function renderLoop() {
     rafId = requestAnimationFrame(renderLoop);
@@ -97,7 +95,6 @@ export async function startPreview(preloaded = null) {
   }
   renderLoop();
 
-  // responsiveness
   function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -105,7 +102,7 @@ export async function startPreview(preloaded = null) {
   }
   window.addEventListener('resize', onResize);
 
-  // --------- Custom gesture handling (pointer events) ----------
+  // pointer-based controls (single drag rotate, two-finger pinch zoom)
   const pointers = new Map();
   let interactionState = {
     mode: 'none',
@@ -222,11 +219,11 @@ export async function startPreview(preloaded = null) {
   container.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
   container.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
 
+  // capture screenshot
   async function captureScreenshot(filename = 'screenshot.png') {
     document.documentElement.classList.add('ui-hidden');
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
-
     const blob = await new Promise((resolve) => {
       try {
         renderer.domElement.toBlob((b) => resolve(b), 'image/png');
@@ -236,16 +233,11 @@ export async function startPreview(preloaded = null) {
           const arr = dataUrl.split(','), mime = arr[0].match(/:(.*?);/)[1], bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
           for (let i = 0; i < n; i++) u8arr[i] = bstr.charCodeAt(i);
           resolve(new Blob([u8arr], { type: mime }));
-        } catch (e2) {
-          resolve(null);
-        }
+        } catch (e2) { resolve(null); }
       }
     });
-
     document.documentElement.classList.remove('ui-hidden');
-
     if (!blob) throw new Error('Screenshot capture failed');
-
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -255,6 +247,172 @@ export async function startPreview(preloaded = null) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     return { success: true, url };
+  }
+
+  // --- AR session starter (attached to returned handle)
+  // options: { vrmUrl, glbUrl, usdzUrl }
+  async function startARSession(options = {}) {
+    const { vrmUrl, glbUrl, usdzUrl } = options;
+    const ua = navigator.userAgent || '';
+    const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isAndroid = /Android/.test(ua);
+
+    // helper to log visible messages to top area (if exists)
+    const topLog = document.getElementById('ar-log') || document.getElementById('load-log');
+    function push(msg) { if (topLog) { const d = document.createElement('div'); d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`; topLog.prepend(d); } else console.log(msg); }
+
+    // iOS Quick Look path (use model-viewer dynamic import)
+    if (isIOS && usdzUrl) {
+      push('iOS detected + USDZ available => launching Quick Look via model-viewer');
+      try {
+        // dynamic import model-viewer; it registers <model-viewer> element
+        await import('https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js');
+        const mv = document.createElement('model-viewer');
+        mv.setAttribute('style', 'position:fixed; inset:0; width:100%; height:100%; display:none; z-index:99999;');
+        mv.setAttribute('ios-src', usdzUrl);
+        mv.setAttribute('ar', '');
+        mv.setAttribute('ar-modes', 'quick-look');
+        document.body.appendChild(mv);
+        try {
+          await mv.activateAR();
+          push('model-viewer.activateAR() called (Quick Look).');
+        } catch (e) {
+          push('model-viewer.activateAR() error: ' + e);
+        }
+        // cleanup after short delay (Quick Look will have been invoked)
+        setTimeout(() => { try { mv.remove(); } catch (e) {} }, 2000);
+        return { success: true, mode: 'quick-look' };
+      } catch (e) {
+        push('model-viewer dynamic import failed: ' + e);
+        return { success: false, error: e };
+      }
+    }
+
+    // WebXR path (Android / supported)
+    if (navigator.xr && navigator.xr.isSessionSupported && isAndroid) {
+      const supported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+      if (!supported) {
+        push('WebXR immersive-ar not supported on this device.');
+        return { success: false, error: 'WebXR not supported' };
+      }
+      // prepare reticle and controller
+      push('Starting WebXR AR session...');
+      const controller = renderer.xr.getController(0);
+      const loader = new THREE.GLTFLoader();
+      let hitTestSource = null;
+      let localRefSpace = null;
+
+      // reticle
+      const reticle = new THREE.Mesh(new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
+
+      // onSelect handler: place model at reticle
+      async function onSelect() {
+        if (!reticle.visible) { push('select: reticle not visible'); return; }
+        push('placing model...');
+        try {
+          const modelUrlToLoad = vrmUrl ? vrmUrl : (glbUrl ? glbUrl : null);
+          if (!modelUrlToLoad) { push('No model URL available'); return; }
+          const gltf = await loader.loadAsync(modelUrlToLoad);
+          if (THREE.VRMUtils) THREE.VRMUtils.removeUnnecessaryJoints(gltf.scene);
+          let maybeVrm = null;
+          try { maybeVrm = await THREE.VRM.from(gltf).catch(()=>null); } catch(e){}
+          const obj = maybeVrm ? maybeVrm.scene : gltf.scene;
+          // decompose reticle's transform into object
+          reticle.matrix.decompose(obj.position, obj.quaternion, obj.scale);
+          // rotate to face camera
+          obj.rotation.y = camera.rotation.y + Math.PI;
+          if (maybeVrm && maybeVrm.lookAt) maybeVrm.lookAt.target = camera;
+          // scale down 50%
+          obj.scale.multiplyScalar(0.5);
+          scene.add(obj);
+          reticle.visible = false;
+          push('model placed in AR scene');
+        } catch (e) {
+          push('Model load/place failed: ' + e);
+        }
+      }
+
+      controller.addEventListener('select', onSelect);
+      scene.add(controller);
+
+      // request session
+      try {
+        const overlayRoot = document.getElementById('ar-screen') || document.getElementById('overlay') || document.body;
+        const options = {
+          requiredFeatures: ['hit-test'],
+          optionalFeatures: ['dom-overlay'],
+          domOverlay: { root: overlayRoot }
+        };
+        const xrSession = await navigator.xr.requestSession('immersive-ar', options);
+        await renderer.xr.setSession(xrSession);
+        renderer.xr.setReferenceSpaceType('local');
+        push('WebXR session set on renderer');
+
+        // create reference space and hitTestSource
+        const viewerSpace = await xrSession.requestReferenceSpace('viewer');
+        hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+        xrSession.addEventListener('end', () => {
+          push('XR session ended');
+          hitTestSource = null;
+          try { controller.removeEventListener('select', onSelect); } catch(e){}
+          reticle.remove();
+        });
+
+        // run render loop
+        renderer.setAnimationLoop((time, frame) => {
+          if (!frame) return;
+          const refSpace = renderer.xr.getReferenceSpace();
+          if (hitTestSource && refSpace) {
+            const hitResults = frame.getHitTestResults(hitTestSource);
+            if (hitResults.length) {
+              const hit = hitResults[0];
+              const pose = hit.getPose(refSpace);
+              reticle.visible = true;
+              reticle.matrix.fromArray(pose.transform.matrix);
+            } else {
+              reticle.visible = false;
+            }
+          }
+          renderer.render(scene, camera);
+        });
+
+        push('WebXR AR started');
+        return { success: true, mode: 'webxr' };
+      } catch (e) {
+        push('Failed to start WebXR session: ' + e);
+        return { success: false, error: e };
+      }
+    }
+
+    // fallback: if GLB exists and model-viewer available, call activateAR; otherwise fail
+    if (glbUrl) {
+      try {
+        await import('https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js');
+        const mv = document.createElement('model-viewer');
+        mv.style.position = 'fixed';
+        mv.style.inset = '0';
+        mv.style.display = 'none';
+        mv.setAttribute('src', glbUrl);
+        if (usdzUrl) mv.setAttribute('ios-src', usdzUrl);
+        mv.setAttribute('ar', '');
+        mv.setAttribute('ar-modes', 'webxr scene-viewer quick-look');
+        document.body.appendChild(mv);
+        try {
+          await mv.activateAR();
+        } catch (e) { console.warn('fallback activateAR error', e); }
+        setTimeout(()=>{ try{ mv.remove(); } catch(e){} }, 1500);
+        return { success: true, mode: 'model-viewer-fallback' };
+      } catch (e) {
+        return { success: false, error: e };
+      }
+    }
+
+    push('No AR method available on this device');
+    return { success: false, error: 'no-ar' };
   }
 
   function stop() {
@@ -276,9 +434,10 @@ export async function startPreview(preloaded = null) {
     container.style.background = prevBg;
   }
 
+  // initial camera alignment
   updateCameraFromSpherical();
 
   return {
-    renderer, scene, camera, controls: null, addedModel, captureScreenshot, stop
+    renderer, scene, camera, controls: null, addedModel, captureScreenshot, startARSession, stop
   };
 }
