@@ -34,12 +34,9 @@
 
   <!-- Side UI: persistent area (toggle) + hidable area (screenshot/back) -->
   <div id="side-ui" class="side-ui initial-hidden">
-    <!-- persistent (not hidden by .ui-hidden) -->
     <div id="side-ui-persistent">
       <button id="btnToggleUI" class="btn small">UI 表示/非表示</button>
     </div>
-
-    <!-- hidable area (will be hidden when .ui-hidden applied) -->
     <div id="side-ui-hidable" class="hidable initial-hidden">
       <button id="btnScreenshot" class="btn small">スクショ</button>
       <button id="btnBackToTitle" class="btn small ghost">戻る</button>
@@ -56,12 +53,13 @@
     <div id="dbgMsg" style="margin-top:6px; color:#f88"></div>
   </div>
 
-  <!-- Libraries: Three (UMD), GLTFLoader, three-vrm, OrbitControls (UMD), model-viewer -->
+  <!-- Libraries: Three (UMD), GLTFLoader (UMD), three-vrm (UMD), OrbitControls (UMD) -->
+  <!-- NOTE: We intentionally DO NOT load model-viewer at page load to avoid module-import conflicts.
+       model-viewer will be loaded dynamically only when needed (Quick Look). -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.6.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <!-- App -->
   <script type="module" src="./js/main.js"></script>
