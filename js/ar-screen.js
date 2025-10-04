@@ -1,11 +1,12 @@
 // js/ar-screen.js
-// ESM module but uses global THREE and UMD OrbitControls (THREE.OrbitControls)
+// Non-AR preview with robust custom gesture controls (pointer events)
+// Replace previous ar-screen.js with this file.
 
 export async function startPreview(preloaded = null) {
   const container = document.getElementById('three-wrap');
   if (!container) throw new Error('No #three-wrap container found');
 
-  // cleanup previous canvas
+  // cleanup previous children
   while (container.firstChild) container.removeChild(container.firstChild);
 
   // create renderer with preserveDrawingBuffer for screenshots
@@ -13,7 +14,9 @@ export async function startPreview(preloaded = null) {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.outputEncoding = THREE.sRGBEncoding;
+  // ensure touches/pointer events go to canvas (and prevent page gestures)
   renderer.domElement.style.touchAction = 'none';
+  renderer.domElement.style.userSelect = 'none';
   container.appendChild(renderer.domElement);
 
   // camera
@@ -36,29 +39,15 @@ export async function startPreview(preloaded = null) {
   const axes = new THREE.AxesHelper(0.5);
   scene.add(axes);
 
-  // Controls — use UMD OrbitControls attached to THREE
-  let controls = null;
-  try {
-    if (THREE && THREE.OrbitControls) {
-      controls = new THREE.OrbitControls(camera, renderer.domElement);
-      controls.target.set(0, 0.85, 0);
-      controls.enableDamping = true;
-      controls.dampingFactor = 0.08;
-      controls.screenSpacePanning = true;
-      controls.enablePan = false;
-      controls.enableZoom = true;
-      controls.minDistance = 0.6;
-      controls.maxDistance = 6;
-      controls.rotateSpeed = 0.6;
-      controls.zoomSpeed = 1.0;
-      controls.update();
-      console.log('OrbitControls (UMD) initialized.');
-    } else {
-      console.warn('THREE.OrbitControls not found (UMD). Controls disabled.');
-    }
-  } catch (e) {
-    console.warn('OrbitControls initialization error:', e);
-  }
+  // initial target and spherical state
+  const target = new THREE.Vector3(0, 0.85, 0);
+  const offset = new THREE.Vector3().subVectors(camera.position, target);
+  const spherical = new THREE.Spherical().setFromVector3(offset);
+  // clamp phi to avoid pole lock
+  const minPhi = 0.1;
+  const maxPhi = Math.PI - 0.1;
+  const minRadius = 0.6;
+  const maxRadius = 6.0;
 
   // add model or placeholder
   let addedModel = null;
@@ -78,22 +67,22 @@ export async function startPreview(preloaded = null) {
       addedModel = cyl;
     }
   } catch (e) {
-    console.warn('Failed to add model to preview:', e);
+    console.warn('add model error', e);
   }
 
-  // set bg to light blue
+  // set background to light blue
   const prevBg = container.style.background || '';
   container.style.background = '#bfefff';
 
-  // animation loop
-  let raf = null;
-  function animate() {
-    raf = requestAnimationFrame(animate);
-    if (controls && typeof controls.update === 'function') controls.update();
+  // Animation loop
+  let rafId = null;
+  function renderLoop() {
+    rafId = requestAnimationFrame(renderLoop);
     renderer.render(scene, camera);
   }
-  animate();
+  renderLoop();
 
+  // responsiveness
   function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -101,12 +90,148 @@ export async function startPreview(preloaded = null) {
   }
   window.addEventListener('resize', onResize);
 
-  // screenshot: hide .hidable, render next frames, capture to blob
+  // --------- Custom gesture handling (pointer events) ----------
+  const pointers = new Map(); // pointerId -> {x,y}
+  let interactionState = {
+    mode: 'none', // 'none' | 'rotate' | 'pinch'
+    startTheta: spherical.theta,
+    startPhi: spherical.phi,
+    startRadius: spherical.radius,
+    startX: 0,
+    startY: 0,
+    startDist: 0
+  };
+
+  const ROTATE_SPEED = 0.005; // sensitivity for single-finger drag
+  const PINCH_ZOOM_SPEED = 0.01; // sensitivity for pinch zoom
+  const WHEEL_ZOOM_SPEED = 0.0015;
+
+  function updateCameraFromSpherical() {
+    // ensure phi/radius clamping
+    spherical.phi = Math.max(minPhi, Math.min(maxPhi, spherical.phi));
+    spherical.radius = Math.max(minRadius, Math.min(maxRadius, spherical.radius));
+    const newPos = new THREE.Vector3().setFromSpherical(spherical).add(target);
+    camera.position.copy(newPos);
+    camera.lookAt(target);
+  }
+
+  function getDistance(p1, p2) {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    return Math.hypot(dx, dy);
+  }
+
+  function onPointerDown(e) {
+    // Only left button for mouse
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+
+    if (pointers.size === 1) {
+      // start rotate
+      const p = pointers.values().next().value;
+      interactionState.mode = 'rotate';
+      interactionState.startX = p.x;
+      interactionState.startY = p.y;
+      interactionState.startTheta = spherical.theta;
+      interactionState.startPhi = spherical.phi;
+    } else if (pointers.size === 2) {
+      // start pinch
+      const it = pointers.values();
+      const pA = it.next().value;
+      const pB = it.next().value;
+      interactionState.mode = 'pinch';
+      interactionState.startDist = getDistance(pA, pB);
+      interactionState.startRadius = spherical.radius;
+    } else {
+      // ignore more than 2 pointers (keep state)
+      interactionState.mode = 'none';
+    }
+  }
+
+  function onPointerMove(e) {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+
+    if (interactionState.mode === 'rotate' && pointers.size === 1) {
+      const p = pointers.values().next().value;
+      const dx = p.x - interactionState.startX;
+      const dy = p.y - interactionState.startY;
+      // adjust theta and phi
+      spherical.theta = interactionState.startTheta - dx * ROTATE_SPEED;
+      spherical.phi = interactionState.startPhi - dy * ROTATE_SPEED;
+      // clamp phi
+      spherical.phi = Math.max(minPhi, Math.min(maxPhi, spherical.phi));
+      updateCameraFromSpherical();
+    } else if (interactionState.mode === 'pinch' && pointers.size === 2) {
+      const it = pointers.values();
+      const pA = it.next().value;
+      const pB = it.next().value;
+      const curDist = getDistance(pA, pB);
+      if (interactionState.startDist > 0) {
+        // ratio-based approach
+        const ratio = interactionState.startDist / curDist;
+        let newRadius = interactionState.startRadius * ratio;
+        // apply some smoothing factor
+        // clamp
+        spherical.radius = Math.max(minRadius, Math.min(maxRadius, newRadius));
+        updateCameraFromSpherical();
+      }
+    }
+  }
+
+  function onPointerUp(e) {
+    try { e.target.releasePointerCapture(e.pointerId); } catch (err) {}
+    pointers.delete(e.pointerId);
+    if (pointers.size === 0) {
+      interactionState.mode = 'none';
+    } else if (pointers.size === 1) {
+      // if one pointer remains, switch to rotate mode and set starting anchors
+      const p = pointers.values().next().value;
+      interactionState.mode = 'rotate';
+      interactionState.startX = p.x;
+      interactionState.startY = p.y;
+      interactionState.startTheta = spherical.theta;
+      interactionState.startPhi = spherical.phi;
+    }
+  }
+
+  function onPointerCancel(e) {
+    pointers.delete(e.pointerId);
+    interactionState.mode = 'none';
+  }
+
+  // wheel zoom (desktop)
+  function onWheel(e) {
+    e.preventDefault();
+    const delta = e.deltaY;
+    spherical.radius += delta * WHEEL_ZOOM_SPEED;
+    spherical.radius = Math.max(minRadius, Math.min(maxRadius, spherical.radius));
+    updateCameraFromSpherical();
+  }
+  // add listeners to renderer.domElement
+  renderer.domElement.addEventListener('pointerdown', onPointerDown, { passive: false });
+  renderer.domElement.addEventListener('pointermove', onPointerMove, { passive: false });
+  renderer.domElement.addEventListener('pointerup', onPointerUp, { passive: false });
+  renderer.domElement.addEventListener('pointercancel', onPointerCancel, { passive: false });
+  // also handle lostpointercapture - ensure state cleanup
+  renderer.domElement.addEventListener('lostpointercapture', (e) => { pointers.delete(e.pointerId); }, { passive: true });
+  // wheel
+  renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
+
+  // Also prevent default touch gestures on container to avoid page scrolling/pinch zooming
+  container.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
+  container.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
+
+  // expose captureScreenshot and stop
   async function captureScreenshot(filename = 'screenshot.png') {
+    // hide hidable UI
     document.documentElement.classList.add('ui-hidden');
+    // wait two frames
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
 
+    // toBlob
     const blob = await new Promise((resolve) => {
       try {
         renderer.domElement.toBlob((b) => resolve(b), 'image/png');
@@ -122,6 +247,7 @@ export async function startPreview(preloaded = null) {
       }
     });
 
+    // restore UI
     document.documentElement.classList.remove('ui-hidden');
 
     if (!blob) throw new Error('Screenshot capture failed');
@@ -138,12 +264,29 @@ export async function startPreview(preloaded = null) {
   }
 
   function stop() {
-    if (raf) cancelAnimationFrame(raf);
-    window.removeEventListener('resize', onResize);
+    // remove event listeners
+    try {
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('pointercancel', onPointerCancel);
+      renderer.domElement.removeEventListener('lostpointercapture', () => {});
+      renderer.domElement.removeEventListener('wheel', onWheel);
+      container.removeEventListener('touchstart', () => {});
+      container.removeEventListener('touchmove', () => {});
+      window.removeEventListener('resize', onResize);
+    } catch (e) { /* ignore */ }
+
+    if (rafId) cancelAnimationFrame(rafId);
     try { renderer.domElement.remove(); } catch (e) {}
     try { renderer.dispose(); } catch (e) {}
     container.style.background = prevBg;
   }
 
-  return { renderer, scene, camera, controls, addedModel, captureScreenshot, stop };
+  // initial update to ensure camera looks at target
+  updateCameraFromSpherical();
+
+  return {
+    renderer, scene, camera, controls: null, addedModel, captureScreenshot, stop
+  };
 }
