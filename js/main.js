@@ -122,29 +122,20 @@ async function init() {
     // bind AR Mode button (enable it now)
     const btnAR = document.getElementById('btnARMode');
     btnAR.disabled = false;
+
+    // === MODIFIED: navigate to external working WebAR when AR button clicked ===
     btnAR.onclick = async () => {
       const arLog = document.getElementById('ar-log');
       function aLog(m) { const d = document.createElement('div'); d.textContent = `[${new Date().toLocaleTimeString()}] ${m}`; arLog.prepend(d); }
-      aLog('ARモード起動を開始します...');
-      if (!globalState.arPreviewHandle || typeof globalState.arPreviewHandle.startARSession !== 'function') {
-        aLog('ARセッション開始機能が未準備です');
-        return;
-      }
-      try {
-        // pass asset URLs
-        const res = await globalState.arPreviewHandle.startARSession({
-          vrmUrl: assetPaths.vrmPath,
-          glbUrl: assetPaths.glbPath,
-          usdzUrl: assetPaths.usdzPath
-        });
-        aLog('AR start result: ' + JSON.stringify(res));
-      } catch (e) {
-        aLog('AR start exception: ' + e);
-      }
+      aLog('外部WebARへ遷移します...');
+      // Navigate to the provided working WebAR URL in the same tab
+      window.location.href = 'https://eguchi-kd.github.io/webar/';
+      // If you prefer a new tab, replace the above with:
+      // window.open('https://eguchi-kd.github.io/webar/', '_blank');
     };
   });
 
-  // Toggle available pre-start as well (persistant button remains)
+  // Toggle available pre-start as well (persistent button remains)
   const toggleBtn = document.getElementById('btnToggleUI');
   if (toggleBtn) toggleBtn.onclick = () => document.documentElement.classList.toggle('ui-hidden');
 }
