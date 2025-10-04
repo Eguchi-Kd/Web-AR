@@ -1,10 +1,16 @@
 // js/ar-screen.js
 // Non-AR preview with robust custom gesture controls (pointer events)
-// Replace previous ar-screen.js with this file.
 
 export async function startPreview(preloaded = null) {
   const container = document.getElementById('three-wrap');
   if (!container) throw new Error('No #three-wrap container found');
+
+  // Debug: log THREE presence and identity
+  console.log('startPreview: window.THREE exists?', !!window.THREE);
+  if (window.THREE) {
+    try { console.log('THREE.REVISION =', THREE.REVISION); } catch (e) {}
+    try { console.log('THREE obj identity:', THREE); } catch (e) {}
+  }
 
   // cleanup previous children
   while (container.firstChild) container.removeChild(container.firstChild);
@@ -14,9 +20,13 @@ export async function startPreview(preloaded = null) {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.outputEncoding = THREE.sRGBEncoding;
-  // ensure touches/pointer events go to canvas (and prevent page gestures)
   renderer.domElement.style.touchAction = 'none';
   renderer.domElement.style.userSelect = 'none';
+  // ensure canvas is on top of background but below UI overlays
+  renderer.domElement.style.position = 'absolute';
+  renderer.domElement.style.inset = '0';
+  renderer.domElement.style.zIndex = '1';
+  renderer.domElement.style.pointerEvents = 'auto';
   container.appendChild(renderer.domElement);
 
   // camera
@@ -43,7 +53,6 @@ export async function startPreview(preloaded = null) {
   const target = new THREE.Vector3(0, 0.85, 0);
   const offset = new THREE.Vector3().subVectors(camera.position, target);
   const spherical = new THREE.Spherical().setFromVector3(offset);
-  // clamp phi to avoid pole lock
   const minPhi = 0.1;
   const maxPhi = Math.PI - 0.1;
   const minRadius = 0.6;
@@ -91,9 +100,9 @@ export async function startPreview(preloaded = null) {
   window.addEventListener('resize', onResize);
 
   // --------- Custom gesture handling (pointer events) ----------
-  const pointers = new Map(); // pointerId -> {x,y}
+  const pointers = new Map();
   let interactionState = {
-    mode: 'none', // 'none' | 'rotate' | 'pinch'
+    mode: 'none',
     startTheta: spherical.theta,
     startPhi: spherical.phi,
     startRadius: spherical.radius,
@@ -102,12 +111,10 @@ export async function startPreview(preloaded = null) {
     startDist: 0
   };
 
-  const ROTATE_SPEED = 0.005; // sensitivity for single-finger drag
-  const PINCH_ZOOM_SPEED = 0.01; // sensitivity for pinch zoom
+  const ROTATE_SPEED = 0.005;
   const WHEEL_ZOOM_SPEED = 0.0015;
 
   function updateCameraFromSpherical() {
-    // ensure phi/radius clamping
     spherical.phi = Math.max(minPhi, Math.min(maxPhi, spherical.phi));
     spherical.radius = Math.max(minRadius, Math.min(maxRadius, spherical.radius));
     const newPos = new THREE.Vector3().setFromSpherical(spherical).add(target);
@@ -122,13 +129,11 @@ export async function startPreview(preloaded = null) {
   }
 
   function onPointerDown(e) {
-    // Only left button for mouse
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
 
     if (pointers.size === 1) {
-      // start rotate
       const p = pointers.values().next().value;
       interactionState.mode = 'rotate';
       interactionState.startX = p.x;
@@ -136,7 +141,6 @@ export async function startPreview(preloaded = null) {
       interactionState.startTheta = spherical.theta;
       interactionState.startPhi = spherical.phi;
     } else if (pointers.size === 2) {
-      // start pinch
       const it = pointers.values();
       const pA = it.next().value;
       const pB = it.next().value;
@@ -144,7 +148,6 @@ export async function startPreview(preloaded = null) {
       interactionState.startDist = getDistance(pA, pB);
       interactionState.startRadius = spherical.radius;
     } else {
-      // ignore more than 2 pointers (keep state)
       interactionState.mode = 'none';
     }
   }
@@ -157,10 +160,8 @@ export async function startPreview(preloaded = null) {
       const p = pointers.values().next().value;
       const dx = p.x - interactionState.startX;
       const dy = p.y - interactionState.startY;
-      // adjust theta and phi
       spherical.theta = interactionState.startTheta - dx * ROTATE_SPEED;
       spherical.phi = interactionState.startPhi - dy * ROTATE_SPEED;
-      // clamp phi
       spherical.phi = Math.max(minPhi, Math.min(maxPhi, spherical.phi));
       updateCameraFromSpherical();
     } else if (interactionState.mode === 'pinch' && pointers.size === 2) {
@@ -169,11 +170,8 @@ export async function startPreview(preloaded = null) {
       const pB = it.next().value;
       const curDist = getDistance(pA, pB);
       if (interactionState.startDist > 0) {
-        // ratio-based approach
         const ratio = interactionState.startDist / curDist;
         let newRadius = interactionState.startRadius * ratio;
-        // apply some smoothing factor
-        // clamp
         spherical.radius = Math.max(minRadius, Math.min(maxRadius, newRadius));
         updateCameraFromSpherical();
       }
@@ -186,7 +184,6 @@ export async function startPreview(preloaded = null) {
     if (pointers.size === 0) {
       interactionState.mode = 'none';
     } else if (pointers.size === 1) {
-      // if one pointer remains, switch to rotate mode and set starting anchors
       const p = pointers.values().next().value;
       interactionState.mode = 'rotate';
       interactionState.startX = p.x;
@@ -201,7 +198,6 @@ export async function startPreview(preloaded = null) {
     interactionState.mode = 'none';
   }
 
-  // wheel zoom (desktop)
   function onWheel(e) {
     e.preventDefault();
     const delta = e.deltaY;
@@ -209,29 +205,22 @@ export async function startPreview(preloaded = null) {
     spherical.radius = Math.max(minRadius, Math.min(maxRadius, spherical.radius));
     updateCameraFromSpherical();
   }
-  // add listeners to renderer.domElement
+
   renderer.domElement.addEventListener('pointerdown', onPointerDown, { passive: false });
   renderer.domElement.addEventListener('pointermove', onPointerMove, { passive: false });
   renderer.domElement.addEventListener('pointerup', onPointerUp, { passive: false });
   renderer.domElement.addEventListener('pointercancel', onPointerCancel, { passive: false });
-  // also handle lostpointercapture - ensure state cleanup
   renderer.domElement.addEventListener('lostpointercapture', (e) => { pointers.delete(e.pointerId); }, { passive: true });
-  // wheel
   renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
 
-  // Also prevent default touch gestures on container to avoid page scrolling/pinch zooming
   container.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
   container.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
 
-  // expose captureScreenshot and stop
   async function captureScreenshot(filename = 'screenshot.png') {
-    // hide hidable UI
     document.documentElement.classList.add('ui-hidden');
-    // wait two frames
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
 
-    // toBlob
     const blob = await new Promise((resolve) => {
       try {
         renderer.domElement.toBlob((b) => resolve(b), 'image/png');
@@ -247,7 +236,6 @@ export async function startPreview(preloaded = null) {
       }
     });
 
-    // restore UI
     document.documentElement.classList.remove('ui-hidden');
 
     if (!blob) throw new Error('Screenshot capture failed');
@@ -264,7 +252,6 @@ export async function startPreview(preloaded = null) {
   }
 
   function stop() {
-    // remove event listeners
     try {
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
@@ -283,7 +270,6 @@ export async function startPreview(preloaded = null) {
     container.style.background = prevBg;
   }
 
-  // initial update to ensure camera looks at target
   updateCameraFromSpherical();
 
   return {
