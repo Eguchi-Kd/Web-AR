@@ -20,13 +20,19 @@ export async function startPreview(preloaded = null) {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.outputEncoding = THREE.sRGBEncoding;
+
+  // ensure touches/pointer events go to canvas (and prevent page gestures)
   renderer.domElement.style.touchAction = 'none';
   renderer.domElement.style.userSelect = 'none';
-  // ensure canvas is on top of background but below UI overlays
-  renderer.domElement.style.position = 'absolute';
-  renderer.domElement.style.inset = '0';
-  renderer.domElement.style.zIndex = '1';
+  // position canvas full-screen and ensure it can receive pointer events
+  renderer.domElement.style.position = 'fixed';
+  renderer.domElement.style.top = '0';
+  renderer.domElement.style.left = '0';
+  renderer.domElement.style.width = '100%';
+  renderer.domElement.style.height = '100%';
+  renderer.domElement.style.zIndex = '5';
   renderer.domElement.style.pointerEvents = 'auto';
+
   container.appendChild(renderer.domElement);
 
   // camera
