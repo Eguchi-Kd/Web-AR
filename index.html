@@ -6,25 +6,12 @@
   <title>WebAR — Title & Load & AR Preview</title>
   <link rel="stylesheet" href="./css/styles.css" />
 
-  <!-- Small override styles to ensure canvas receives pointer events.
-       Non-interactive overlays are made pointer-events: none so they don't block input.
-       Side UI (buttons) remain interactive. -->
   <style>
-    /* Treat these overlay containers as visual-only unless they explicitly contain interactive controls */
-    .app-ui,        /* title UI, debug panel, etc. */
-    .ar-screen,     /* ar-screen overlay container */
-    .top-log,       /* top summary log */
-    .load-log,      /* logs container */
-    #loading-screen /* loading overlay */ {
-      pointer-events: none !important;
-    }
+    /* overlay rules: keep overlays non-interactive except the side-ui which contains buttons */
+    .app-ui, .ar-screen, .top-log, .load-log, #loading-screen { pointer-events: none !important; }
+    #side-ui, #side-ui * { pointer-events: auto !important; }
 
-    /* Side UI must remain interactive (buttons), so enable pointer events only for it and its descendants */
-    #side-ui, #side-ui * {
-      pointer-events: auto !important;
-    }
-
-    /* Ensure the canvas we create fills the viewport and is positioned to receive events */
+    /* ensure the three canvas placed under #three-wrap fills viewport */
     #three-wrap { position:fixed; inset:0; z-index:0; }
     #three-wrap canvas { position:fixed; inset:0; width:100% !important; height:100% !important; z-index:5; touch-action:none; }
   </style>
@@ -55,12 +42,13 @@
     <div id="ar-log" class="load-log initial-hidden hidable"></div>
   </div>
 
-  <!-- Side UI: persistent area (toggle) + hidable area (screenshot/back) -->
+  <!-- Side UI: persistent area (toggle) + hidable area (screenshot/back/AR) -->
   <div id="side-ui" class="side-ui initial-hidden">
     <div id="side-ui-persistent">
       <button id="btnToggleUI" class="btn small">UI 表示/非表示</button>
     </div>
     <div id="side-ui-hidable" class="hidable initial-hidden">
+      <button id="btnARMode" class="btn small">ARモード</button>
       <button id="btnScreenshot" class="btn small">スクショ</button>
       <button id="btnBackToTitle" class="btn small ghost">戻る</button>
     </div>
