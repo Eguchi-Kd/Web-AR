@@ -1,5 +1,5 @@
 // js/ar-screen.js
-// Non-AR preview with custom gestures, plus AR-mode starter that can trigger Quick Look (iOS) or WebXR (Android).
+// 修正版: AR セッションと renderer のライフサイクル衝突を避ける処理を追加
 
 export async function startPreview(preloaded = null) {
   const container = document.getElementById('three-wrap');
@@ -10,7 +10,7 @@ export async function startPreview(preloaded = null) {
     try { console.log('THREE.REVISION =', THREE.REVISION); } catch (e) {}
   }
 
-  // cleanup previous children
+  // cleanup previous children (but do NOT forcibly dispose renderer if XR session may be active)
   while (container.firstChild) container.removeChild(container.firstChild);
 
   // create renderer with preserveDrawingBuffer for screenshots
@@ -29,7 +29,7 @@ export async function startPreview(preloaded = null) {
   renderer.domElement.style.pointerEvents = 'auto';
   container.appendChild(renderer.domElement);
 
-  // camera / scene
+  // scene / camera
   const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(0, 1.1, 3);
   const scene = new THREE.Scene();
@@ -41,29 +41,22 @@ export async function startPreview(preloaded = null) {
   dir.position.set(1, 1, 1).normalize();
   scene.add(dir);
 
-  // grid & axes
-  const grid = new THREE.GridHelper(10, 10);
-  scene.add(grid);
-  const axes = new THREE.AxesHelper(0.5);
-  scene.add(axes);
+  // placeholders
+  const grid = new THREE.GridHelper(10, 10); scene.add(grid);
+  const axes = new THREE.AxesHelper(0.5); scene.add(axes);
 
-  // initial spherical controls state
   const target = new THREE.Vector3(0, 0.85, 0);
   const offset = new THREE.Vector3().subVectors(camera.position, target);
   const spherical = new THREE.Spherical().setFromVector3(offset);
-  const minPhi = 0.1;
-  const maxPhi = Math.PI - 0.1;
-  const minRadius = 0.6;
-  const maxRadius = 6.0;
+  const minPhi = 0.1, maxPhi = Math.PI - 0.1, minRadius = 0.6, maxRadius = 6.0;
 
-  // add preloaded model (if any) to preview - scale to 50% (multiply by 0.5)
+  // add preloaded model (scaled 50%)
   let addedModel = null;
   try {
     if (preloaded && preloaded.vrm) {
-      // if preloaded.vrm is VRM object or scene
       const vm = preloaded.vrm;
       const sceneObj = vm.scene ? vm.scene : vm;
-      sceneObj.scale.multiplyScalar(0.5); // 50% smaller
+      sceneObj.scale.multiplyScalar(0.5);
       scene.add(sceneObj);
       addedModel = sceneObj;
     } else if (preloaded && preloaded.gltf && preloaded.gltf.scene) {
@@ -83,17 +76,26 @@ export async function startPreview(preloaded = null) {
     console.warn('add model error', e);
   }
 
-  // background
   const prevBg = container.style.background || '';
   container.style.background = '#bfefff';
 
-  // render loop
-  let rafId = null;
-  function renderLoop() {
-    rafId = requestAnimationFrame(renderLoop);
+  // render loop via renderer.setAnimationLoop -> safer with XR
+  let isAnimating = true;
+  function renderLoop(time, frame) {
+    // Three.js recommends setAnimationLoop for XR compatibility
     renderer.render(scene, camera);
   }
-  renderLoop();
+  renderer.setAnimationLoop(renderLoop);
+
+  function stopAnimationLoop() {
+    // Use setAnimationLoop(null) to stop safely (do NOT call cancelAnimationFrame directly)
+    try {
+      renderer.setAnimationLoop(null);
+    } catch (e) {
+      console.warn('renderer.setAnimationLoop(null) failed:', e);
+    }
+    isAnimating = false;
+  }
 
   function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -102,20 +104,13 @@ export async function startPreview(preloaded = null) {
   }
   window.addEventListener('resize', onResize);
 
-  // pointer-based controls (single drag rotate, two-finger pinch zoom)
+  // ---------- pointer controls (unchanged) ----------
   const pointers = new Map();
   let interactionState = {
-    mode: 'none',
-    startTheta: spherical.theta,
-    startPhi: spherical.phi,
-    startRadius: spherical.radius,
-    startX: 0,
-    startY: 0,
-    startDist: 0
+    mode: 'none', startTheta: spherical.theta, startPhi: spherical.phi, startRadius: spherical.radius,
+    startX: 0, startY: 0, startDist: 0
   };
-
-  const ROTATE_SPEED = 0.005;
-  const WHEEL_ZOOM_SPEED = 0.0015;
+  const ROTATE_SPEED = 0.005, WHEEL_ZOOM_SPEED = 0.0015;
 
   function updateCameraFromSpherical() {
     spherical.phi = Math.max(minPhi, Math.min(maxPhi, spherical.phi));
@@ -124,90 +119,54 @@ export async function startPreview(preloaded = null) {
     camera.position.copy(newPos);
     camera.lookAt(target);
   }
-
-  function getDistance(p1, p2) {
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    return Math.hypot(dx, dy);
-  }
+  function getDistance(p1, p2) { const dx = p2.x - p1.x, dy = p2.y - p1.y; return Math.hypot(dx, dy); }
 
   function onPointerDown(e) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
-
     if (pointers.size === 1) {
       const p = pointers.values().next().value;
       interactionState.mode = 'rotate';
-      interactionState.startX = p.x;
-      interactionState.startY = p.y;
-      interactionState.startTheta = spherical.theta;
-      interactionState.startPhi = spherical.phi;
+      interactionState.startX = p.x; interactionState.startY = p.y;
+      interactionState.startTheta = spherical.theta; interactionState.startPhi = spherical.phi;
     } else if (pointers.size === 2) {
-      const it = pointers.values();
-      const pA = it.next().value;
-      const pB = it.next().value;
-      interactionState.mode = 'pinch';
-      interactionState.startDist = getDistance(pA, pB);
+      const it = pointers.values(); const pA = it.next().value; const pB = it.next().value;
+      interactionState.mode = 'pinch'; interactionState.startDist = getDistance(pA, pB);
       interactionState.startRadius = spherical.radius;
-    } else {
-      interactionState.mode = 'none';
-    }
+    } else interactionState.mode = 'none';
   }
-
   function onPointerMove(e) {
     if (!pointers.has(e.pointerId)) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
-
     if (interactionState.mode === 'rotate' && pointers.size === 1) {
-      const p = pointers.values().next().value;
-      const dx = p.x - interactionState.startX;
-      const dy = p.y - interactionState.startY;
+      const p = pointers.values().next().value; const dx = p.x - interactionState.startX, dy = p.y - interactionState.startY;
       spherical.theta = interactionState.startTheta - dx * ROTATE_SPEED;
       spherical.phi = interactionState.startPhi - dy * ROTATE_SPEED;
-      spherical.phi = Math.max(minPhi, Math.min(maxPhi, spherical.phi));
       updateCameraFromSpherical();
     } else if (interactionState.mode === 'pinch' && pointers.size === 2) {
-      const it = pointers.values();
-      const pA = it.next().value;
-      const pB = it.next().value;
+      const it = pointers.values(); const pA = it.next().value; const pB = it.next().value;
       const curDist = getDistance(pA, pB);
       if (interactionState.startDist > 0) {
         const ratio = interactionState.startDist / curDist;
-        let newRadius = interactionState.startRadius * ratio;
-        spherical.radius = Math.max(minRadius, Math.min(maxRadius, newRadius));
+        spherical.radius = Math.max(minRadius, Math.min(maxRadius, interactionState.startRadius * ratio));
         updateCameraFromSpherical();
       }
     }
   }
-
   function onPointerUp(e) {
     try { e.target.releasePointerCapture(e.pointerId); } catch (err) {}
     pointers.delete(e.pointerId);
-    if (pointers.size === 0) {
-      interactionState.mode = 'none';
-    } else if (pointers.size === 1) {
+    if (pointers.size === 0) interactionState.mode = 'none';
+    else if (pointers.size === 1) {
       const p = pointers.values().next().value;
       interactionState.mode = 'rotate';
-      interactionState.startX = p.x;
-      interactionState.startY = p.y;
-      interactionState.startTheta = spherical.theta;
-      interactionState.startPhi = spherical.phi;
+      interactionState.startX = p.x; interactionState.startY = p.y;
+      interactionState.startTheta = spherical.theta; interactionState.startPhi = spherical.phi;
     }
   }
-
-  function onPointerCancel(e) {
-    pointers.delete(e.pointerId);
-    interactionState.mode = 'none';
-  }
-
-  function onWheel(e) {
-    e.preventDefault();
-    const delta = e.deltaY;
-    spherical.radius += delta * WHEEL_ZOOM_SPEED;
-    spherical.radius = Math.max(minRadius, Math.min(maxRadius, spherical.radius));
-    updateCameraFromSpherical();
-  }
+  function onPointerCancel(e){ pointers.delete(e.pointerId); interactionState.mode = 'none'; }
+  function onWheel(e){ e.preventDefault(); spherical.radius += e.deltaY * WHEEL_ZOOM_SPEED; spherical.radius = Math.max(minRadius, Math.min(maxRadius, spherical.radius)); updateCameraFromSpherical(); }
 
   renderer.domElement.addEventListener('pointerdown', onPointerDown, { passive: false });
   renderer.domElement.addEventListener('pointermove', onPointerMove, { passive: false });
@@ -215,19 +174,17 @@ export async function startPreview(preloaded = null) {
   renderer.domElement.addEventListener('pointercancel', onPointerCancel, { passive: false });
   renderer.domElement.addEventListener('lostpointercapture', (e) => { pointers.delete(e.pointerId); }, { passive: true });
   renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
-
   container.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
   container.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
 
-  // capture screenshot
+  // safe screenshot
   async function captureScreenshot(filename = 'screenshot.png') {
     document.documentElement.classList.add('ui-hidden');
     await new Promise(requestAnimationFrame);
     await new Promise(requestAnimationFrame);
     const blob = await new Promise((resolve) => {
-      try {
-        renderer.domElement.toBlob((b) => resolve(b), 'image/png');
-      } catch (e) {
+      try { renderer.domElement.toBlob((b) => resolve(b), 'image/png'); }
+      catch (e) {
         try {
           const dataUrl = renderer.domElement.toDataURL('image/png');
           const arr = dataUrl.split(','), mime = arr[0].match(/:(.*?);/)[1], bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
@@ -238,18 +195,12 @@ export async function startPreview(preloaded = null) {
     });
     document.documentElement.classList.remove('ui-hidden');
     if (!blob) throw new Error('Screenshot capture failed');
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     return { success: true, url };
   }
 
-  // --- AR session starter (attached to returned handle)
+  // -------- AR start logic (robust) ----------
   // options: { vrmUrl, glbUrl, usdzUrl }
   async function startARSession(options = {}) {
     const { vrmUrl, glbUrl, usdzUrl } = options;
@@ -257,59 +208,50 @@ export async function startPreview(preloaded = null) {
     const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const isAndroid = /Android/.test(ua);
 
-    // helper to log visible messages to top area (if exists)
     const topLog = document.getElementById('ar-log') || document.getElementById('load-log');
     function push(msg) { if (topLog) { const d = document.createElement('div'); d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`; topLog.prepend(d); } else console.log(msg); }
 
-    // iOS Quick Look path (use model-viewer dynamic import)
+    // iOS Quick Look path
     if (isIOS && usdzUrl) {
-      push('iOS detected + USDZ available => launching Quick Look via model-viewer');
+      push('iOS + USDZ => model-viewer Quick Look (dynamic import)');
       try {
-        // dynamic import model-viewer; it registers <model-viewer> element
         await import('https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js');
         const mv = document.createElement('model-viewer');
-        mv.setAttribute('style', 'position:fixed; inset:0; width:100%; height:100%; display:none; z-index:99999;');
-        mv.setAttribute('ios-src', usdzUrl);
-        mv.setAttribute('ar', '');
-        mv.setAttribute('ar-modes', 'quick-look');
+        mv.style.position = 'fixed'; mv.style.inset = '0'; mv.style.display = 'none'; mv.style.zIndex = '99999';
+        mv.setAttribute('ios-src', usdzUrl); mv.setAttribute('ar', ''); mv.setAttribute('ar-modes', 'quick-look');
         document.body.appendChild(mv);
         try {
           await mv.activateAR();
           push('model-viewer.activateAR() called (Quick Look).');
-        } catch (e) {
-          push('model-viewer.activateAR() error: ' + e);
-        }
-        // cleanup after short delay (Quick Look will have been invoked)
-        setTimeout(() => { try { mv.remove(); } catch (e) {} }, 2000);
+        } catch (e) { push('model-viewer.activateAR() error: ' + e); }
+        setTimeout(()=>{ try{ mv.remove(); }catch(e){} }, 2000);
         return { success: true, mode: 'quick-look' };
       } catch (e) {
-        push('model-viewer dynamic import failed: ' + e);
+        push('model-viewer import failed: ' + e);
         return { success: false, error: e };
       }
     }
 
-    // WebXR path (Android / supported)
+    // WebXR path (Android)
     if (navigator.xr && navigator.xr.isSessionSupported && isAndroid) {
-      const supported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+      const supported = await navigator.xr.isSessionSupported('immersive-ar').catch(()=>false);
       if (!supported) {
-        push('WebXR immersive-ar not supported on this device.');
+        push('WebXR immersive-ar not supported.');
         return { success: false, error: 'WebXR not supported' };
       }
+
+      push('Starting WebXR session...');
       // prepare reticle and controller
-      push('Starting WebXR AR session...');
-      const controller = renderer.xr.getController(0);
       const loader = new THREE.GLTFLoader();
       let hitTestSource = null;
       let localRefSpace = null;
 
-      // reticle
       const reticle = new THREE.Mesh(new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
         new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
-      reticle.matrixAutoUpdate = false;
-      reticle.visible = false;
-      scene.add(reticle);
+      reticle.matrixAutoUpdate = false; reticle.visible = false; scene.add(reticle);
 
-      // onSelect handler: place model at reticle
+      // onSelect handler to place model
+      const controller = renderer.xr.getController(0);
       async function onSelect() {
         if (!reticle.visible) { push('select: reticle not visible'); return; }
         push('placing model...');
@@ -321,12 +263,10 @@ export async function startPreview(preloaded = null) {
           let maybeVrm = null;
           try { maybeVrm = await THREE.VRM.from(gltf).catch(()=>null); } catch(e){}
           const obj = maybeVrm ? maybeVrm.scene : gltf.scene;
-          // decompose reticle's transform into object
           reticle.matrix.decompose(obj.position, obj.quaternion, obj.scale);
-          // rotate to face camera
           obj.rotation.y = camera.rotation.y + Math.PI;
           if (maybeVrm && maybeVrm.lookAt) maybeVrm.lookAt.target = camera;
-          // scale down 50%
+          // apply 50% scale reduction
           obj.scale.multiplyScalar(0.5);
           scene.add(obj);
           reticle.visible = false;
@@ -339,30 +279,46 @@ export async function startPreview(preloaded = null) {
       controller.addEventListener('select', onSelect);
       scene.add(controller);
 
-      // request session
       try {
+        // request session safely
         const overlayRoot = document.getElementById('ar-screen') || document.getElementById('overlay') || document.body;
-        const options = {
-          requiredFeatures: ['hit-test'],
-          optionalFeatures: ['dom-overlay'],
-          domOverlay: { root: overlayRoot }
-        };
+        const options = { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'], domOverlay: { root: overlayRoot } };
         const xrSession = await navigator.xr.requestSession('immersive-ar', options);
-        await renderer.xr.setSession(xrSession);
-        renderer.xr.setReferenceSpaceType('local');
-        push('WebXR session set on renderer');
 
-        // create reference space and hitTestSource
-        const viewerSpace = await xrSession.requestReferenceSpace('viewer');
-        hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
-        xrSession.addEventListener('end', () => {
-          push('XR session ended');
-          hitTestSource = null;
-          try { controller.removeEventListener('select', onSelect); } catch(e){}
+        // set session on renderer (wrap in try/catch)
+        try {
+          await renderer.xr.setSession(xrSession);
+          renderer.xr.setReferenceSpaceType('local');
+        } catch (e) {
+          push('renderer.xr.setSession failed: ' + e);
+          // cleanup before returning
+          try { controller.removeEventListener('select', onSelect); } catch(e) {}
           reticle.remove();
+          return { success: false, error: e };
+        }
+
+        push('WebXR session active on renderer');
+
+        // create hit test source
+        try {
+          const viewerSpace = await xrSession.requestReferenceSpace('viewer');
+          hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+        } catch (e) {
+          push('hit-test source creation failed: ' + e);
+        }
+
+        // listen for session end to cleanup (do minimal cleanup now; do NOT dispose renderer here)
+        xrSession.addEventListener('end', () => {
+          push('XR session ended (event). performing cleanup.');
+          try { controller.removeEventListener('select', onSelect); } catch(e) {}
+          try { if (hitTestSource) { hitTestSource = null; } } catch(e){}
+          // reticle removal is safe here
+          try { reticle.remove(); } catch(e){}
+          // stop only Three animation loop; do not forcibly dispose renderer here
+          try { renderer.setAnimationLoop(null); } catch(e){ console.warn('renderer.setAnimationLoop(null) failed on end event', e); }
         });
 
-        // run render loop
+        // set Three's XR animation loop which receives frame
         renderer.setAnimationLoop((time, frame) => {
           if (!frame) return;
           const refSpace = renderer.xr.getReferenceSpace();
@@ -381,29 +337,28 @@ export async function startPreview(preloaded = null) {
         });
 
         push('WebXR AR started');
-        return { success: true, mode: 'webxr' };
+        return { success: true, mode: 'webxr', session: xrSession };
       } catch (e) {
-        push('Failed to start WebXR session: ' + e);
+        push('Failed to start WebXR session (requestSession failed): ' + e);
+        try { controller.removeEventListener('select', onSelect); } catch(e){}
+        try { reticle.remove(); } catch(e){}
+        // ensure animation loop stopped
+        try { renderer.setAnimationLoop(null); } catch(e){}
         return { success: false, error: e };
       }
-    }
+    } // end WebXR
 
-    // fallback: if GLB exists and model-viewer available, call activateAR; otherwise fail
+    // fallback: model-viewer if GLB present
     if (glbUrl) {
       try {
         await import('https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js');
         const mv = document.createElement('model-viewer');
-        mv.style.position = 'fixed';
-        mv.style.inset = '0';
-        mv.style.display = 'none';
+        mv.style.position = 'fixed'; mv.style.inset = '0'; mv.style.display = 'none';
         mv.setAttribute('src', glbUrl);
         if (usdzUrl) mv.setAttribute('ios-src', usdzUrl);
-        mv.setAttribute('ar', '');
-        mv.setAttribute('ar-modes', 'webxr scene-viewer quick-look');
+        mv.setAttribute('ar', ''); mv.setAttribute('ar-modes', 'webxr scene-viewer quick-look');
         document.body.appendChild(mv);
-        try {
-          await mv.activateAR();
-        } catch (e) { console.warn('fallback activateAR error', e); }
+        try { await mv.activateAR(); } catch(e){ console.warn('fallback activateAR error', e); }
         setTimeout(()=>{ try{ mv.remove(); } catch(e){} }, 1500);
         return { success: true, mode: 'model-viewer-fallback' };
       } catch (e) {
@@ -411,11 +366,13 @@ export async function startPreview(preloaded = null) {
       }
     }
 
-    push('No AR method available on this device');
+    push('No AR method available');
     return { success: false, error: 'no-ar' };
-  }
+  } // end startARSession
 
+  // safe stop function
   function stop() {
+    // remove event listeners
     try {
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
@@ -428,16 +385,29 @@ export async function startPreview(preloaded = null) {
       window.removeEventListener('resize', onResize);
     } catch (e) { /* ignore */ }
 
-    if (rafId) cancelAnimationFrame(rafId);
-    try { renderer.domElement.remove(); } catch (e) {}
-    try { renderer.dispose(); } catch (e) {}
+    // stop animation loop via Three API (safer than cancelAnimationFrame)
+    try { renderer.setAnimationLoop(null); } catch (e) { console.warn('renderer.setAnimationLoop(null) error', e); }
+
+    // remove canvas from DOM and dispose renderer (safe only when XR session not active)
+    try {
+      const session = renderer.xr.getSession && renderer.xr.getSession();
+      if (session) {
+        // do not dispose while session active; renderer.xr will be cleared on session end handler
+        console.warn('stop(): XR session still active, skipping dispose; will clean up on session end');
+      } else {
+        try { renderer.domElement.remove(); } catch(e){}
+        try { renderer.dispose(); } catch(e){}
+      }
+    } catch (e) {
+      console.warn('Error during stop cleanup:', e);
+      try { renderer.domElement.remove(); } catch(e){}
+      try { renderer.dispose(); } catch(e){}
+    }
     container.style.background = prevBg;
   }
 
   // initial camera alignment
   updateCameraFromSpherical();
 
-  return {
-    renderer, scene, camera, controls: null, addedModel, captureScreenshot, startARSession, stop
-  };
+  return { renderer, scene, camera, controls: null, addedModel, captureScreenshot, startARSession, stop };
 }
